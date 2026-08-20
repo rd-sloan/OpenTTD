@@ -937,13 +937,11 @@ void Vehicle::PreDestructor()
 
 Vehicle::~Vehicle()
 {
-	/* Before the CleaningPool() early return below, so that wholesale pool cleaning
-	 * on new game or load empties the registry too. CleanPool deletes every item
-	 * individually, so this runs once per vehicle either way. */
-	UnregisterVehicleEntity(this->index);
-
 	if (CleaningPool()) {
 		this->cargo.OnCleanPool();
+		/* Pool cleaning skips the teardown below, so release the entity here instead.
+		 * CleanPool deletes every item individually, so this still runs once per vehicle. */
+		UnregisterVehicleEntity(this->index);
 		return;
 	}
 
@@ -962,6 +960,12 @@ Vehicle::~Vehicle()
 		DeleteVehicleNews(this->index);
 		DeleteNewGRFInspectWindow(GetGrfSpecFeature(this->type), this->index);
 	}
+
+	/* Last, so that the entity outlives the teardown above. Nothing in it reads a
+	 * component today, but releasing the entity first is an access violation rather
+	 * than a leak the moment something does -- an attempt to move Vehicle::coord into
+	 * a component crashed here, because MarkAllViewportsDirty reads it. */
+	UnregisterVehicleEntity(this->index);
 }
 
 /**

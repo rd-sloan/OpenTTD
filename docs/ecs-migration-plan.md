@@ -584,10 +584,64 @@ Drawing timings could not resolve anything. Across phases 0, 1 and 2 the Hilberg
 at all, so a 33% swing there is pure machine noise. No claim either way is
 defensible from this harness.
 
-**Deferred, with reasons.** `sprite_cache`, as above. `coord` (41 sites in 3
-files) and `bounds` (82 sites in 8 files) would repeat the same pattern for no
-measurable gain and no new learning, and `bounds` is not even marked `NOSAVE`
-despite appearing in no descriptor. Worth doing only as practice.
+**Deferred, with reasons.** `sprite_cache`, as above.
+
+`coord` (29 sites in 3 files) and `bounds` (47 sites in 7 files) were attempted
+and **reverted**. Both are genuinely presentation-only, so the phase's premise
+held, and the mechanical part went fine. Two things went wrong, and both are
+worth more than the change would have been.
+
+**The destructor read a component after the entity was gone.** `~Vehicle()` calls
+`MarkAllViewportsDirty()`, which reads `coord`, but the phase 1 hook released the
+entity at the *top* of the destructor. That is an access violation, not a leak,
+and it crashed 1.3 seconds into a run. `colourmap` never exposed it because
+nothing during teardown reads the colour map.
+
+The fix is to release the entity last, on both the normal path and the
+`CleaningPool()` early return, and **that fix has been kept** even though the
+components were reverted: it is unconditionally more correct for any future
+component that teardown touches, and phase 4 will certainly add one.
+
+**The accessor seam is only cheap when it is called once per operation.**
+`UpdateDeltaXY` writes `bounds` field by field -- the road vehicle implementation
+alone has about fifteen separate writes -- and it runs for every moving vehicle
+every tick. Replacing one field access with a registry lookup *per write* meant a
+function call, a vector index, a sparse-set lookup and a dereference, fifteen
+times where there had been fifteen offsets from `this`. Measured on Hilbergen at
+20,000 ticks:
+
+| | `GameLoop` total | `sizeof(Vehicle)` |
+| --- | --- | --- |
+| Phase 0 baseline | 7,971 ms | 552 |
+| Phase 2, `colourmap` only | 8,948 ms | 544 |
+| With `coord` and `bounds` moved | **13,874 ms** | 520 |
+
+That is roughly +74% on the game loop, far outside the 15% noise band, in
+exchange for 24 bytes on a struct. Reverted.
+
+**This is the most important finding of the phase, because phase 4 is exactly the
+same shape.** `x_pos`, `y_pos`, `z_pos`, `direction`, `cur_speed` and `subspeed`
+are all written individually in hot movement code. Giving each a naive accessor
+would reproduce this regression precisely, and it would be much harder to spot
+there because phase 4 is *expected* to change timings.
+
+Phase 4 must therefore resolve the component reference **once per function** and
+work through a local, not once per field access:
+
+```c++
+/* Wrong: one registry lookup per write. */
+this->GetBounds().extent.x = 24;
+this->GetBounds().extent.y = 24;
+
+/* Right: one lookup, then plain member writes. */
+SpriteBounds &bounds = this->GetBounds();
+bounds.extent.x = 24;
+bounds.extent.y = 24;
+```
+
+That would very likely have recovered most of the loss here, but recovering a
+self-inflicted regression on presentation fields with no upside is not work worth
+doing. The lesson transfers for free; the code does not need to.
 
 **Exit: met.** Builds in both configurations, both saves load and play,
 fingerprints unchanged, registry valid, regression suite green. The visual
@@ -621,6 +675,13 @@ Extract the fields the tick loop actually reads -- `x_pos`, `y_pos`, `z_pos`,
 `direction`, `cur_speed`, `subspeed`, `progress`, `tick_counter`,
 `motion_counter` -- into one or two tightly packed components.
 This is where the ~600-byte stride collapses toward a cache line.
+
+**Resolve the component reference once per function**, not once per field access.
+Phase 2 measured a 74% game loop regression from doing the latter with `bounds`,
+and the movement code here has exactly the same shape: many individual writes to
+`x_pos`, `y_pos`, `direction` and friends inside one hot function. Bind a local
+reference at the top and work through it. This is not a micro-optimisation, it is
+the difference between the phase being a win and being a large loss.
 
 Sequence it in three commits per field group:
 
