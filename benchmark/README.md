@@ -35,8 +35,13 @@ workload counts, and can verify that two identical runs produce byte-identical s
 ```
 
 Reports land in `out/<label>-<save>-<config>.tsv` as tab separated key/value pairs.
-Keys are grouped by prefix: `run.`, `world.`, `load.`, `sizeof.`, `perf.`, `state.`,
-`determinism.`, `info.`.
+Keys are grouped by prefix: `run.`, `world.`, `load.`, `sizeof.`, `perf.`, `ecs.`,
+`state.`, `determinism.`, `info.`.
+
+The `ecs.` keys track the EnTT registry added in phase 1. `ecs.vehicle_entities` must
+always equal `load.vehicle_parts`, and `ecs.registry_valid` must be 1 -- it checks one
+entity per pooled vehicle, a correct identity mapping in both directions, and ascending
+`VehicleID` iteration order. Both are cheap to eyeball and worth checking on every run.
 
 Each `perf.<group>` entry carries five figures, which answer different questions:
 

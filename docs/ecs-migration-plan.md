@@ -134,6 +134,20 @@ ascending iteration despite the reversed walk.
 That reproduces `PoolIterator`'s ascending-index order exactly, which is what
 makes an order-preserving migration possible at all.
 
+The mechanism, since it is worth knowing rather than trusting: iteration walks
+the packed array backwards (`begin()` is `iterator{packed, packed.size()}` and
+`operator*` reads `packed[offset - 1]`), and `sort_n` sorts through *reverse*
+iterators (`algo(packed.rend() - length, packed.rend(), compare)`), leaving the
+array physically descending.
+Walking a descending array backwards yields ascending order, so the two
+reversals cancel by design.
+EnTT defines `sort` in terms of iteration order, not physical layout.
+
+The practical consequence is that the reversed walk is invisible **as long as you
+sort**, and leaks the moment you iterate unsorted storage.
+That is a live trap for phase 2, where the client-side components deliberately do
+not need sorting: code there must not assume creation order.
+
 **Consequence:** owning groups are unavailable for game-state components.
 EnTT forbids sorting a pool once a group owns it, and sorting is exactly what is
 needed here.
@@ -144,6 +158,19 @@ Use views, or non-owning groups.
 EnTT's default swap-and-pop invalidates references on removal -- and *sorting
 moves components too*, so switching a storage to `in_place_delete` does not
 rescue you.
+
+In fact `in_place_delete` is not merely insufficient, it is unavailable. `sort_n`
+opens with
+
+```c++
+ENTT_ASSERT((mode != deletion_policy::in_place) || (head == max_size), "Sorting with tombstones not allowed");
+```
+
+so a storage using in-place deletion cannot be sorted once it holds a tombstone.
+Pointer stability via `in_place_delete` and canonical order via `sort` are
+therefore mutually exclusive for any storage that game-state code iterates, and
+canonical order is not negotiable. The rule below is the only route, not the
+better of two.
 
 Meanwhile `Vehicle` is threaded through six intrusive pointers (`next`,
 `previous`, `first`, `last`, and the shared-order pair) and two hash chains that
@@ -409,7 +436,7 @@ path is used.
 
 Making the path absolute fixes it, and all four tests now pass in about 22 s.
 
-### Phase 1 -- Registry, identity mapping, lifecycle (CLEAR)
+### Phase 1 -- Registry, identity mapping, lifecycle (CLEAR) -- done
 
 Stand up an `entt::registry` beside `_vehicle_pool` and keep them in lockstep:
 create an entity in the `Vehicle` constructor, destroy it in `PreDestructor()`.
@@ -428,8 +455,49 @@ step in the whole plan.
 
 No data moves yet.
 
-**Exit:** standard criteria, plus entity count tracks `Vehicle::GetNumItems()`
-exactly across create, destroy, save, load and new-game; order assert silent.
+Implemented in `src/vehicle_registry.{h,cpp}`. Notes on what the implementation
+settled, since some of it was not obvious from the plan:
+
+- **One constructor hook suffices.** `Pool::CreateAtIndex` does
+  `::new (data) T(index, ...)`, so savegame load comes through
+  `Vehicle::Vehicle(VehicleID, VehicleType)` like everything else. Destruction hooks
+  into `~Vehicle()` *above* its `CleaningPool()` early return, so wholesale pool
+  cleaning on new game or load empties the registry too -- `CleanPool` deletes each
+  item individually, so the hook runs once per vehicle either way.
+- **The registry is a deliberately leaked singleton**, following
+  `PoolBase::GetPools()`. Static destruction order across translation units is
+  unspecified, so a file-scope registry could be destroyed while a `Vehicle`
+  destructor elsewhere is still running during teardown. Leaking one allocation
+  removes the hazard rather than reasoning about the ordering.
+- **Validation is split by cost.** `SortVehicleRegistry` carries an O(1) assert that
+  the entity count matches `Vehicle::GetNumItems()`, which runs on every structural
+  change and catches a leak at the moment it happens. The O(n) checks -- identity
+  mapping both ways, and ascending iteration order -- live in
+  `ValidateVehicleRegistry` and are reported as `ecs.registry_valid` at the end of a
+  benchmark run. Running the O(n) checks per tick was not viable: effect vehicles
+  churn constantly, so the registry is dirty most ticks, and 85,000 vehicles times
+  20,000 ticks is not a debug build anyone would wait for.
+
+**Exit: met.** Entity count equalled `Vehicle::GetNumItems()` and
+`ecs.registry_valid` was 1 in every case:
+
+| Case | Vehicles | Entities | Valid |
+| --- | --- | --- | --- |
+| Hilbergen, 20,000 ticks | 2,818 | 2,818 | yes |
+| wentbourne, 5,000 ticks | 85,259 | 85,259 | yes |
+| Hilbergen, Debug, 3,000 ticks | 2,812 | 2,812 | yes |
+| New game from seed, 3,000 ticks | 10 | 10 | yes |
+| Reload of a phase 1 exit save | 2,818 | 2,818 | yes |
+
+Both fingerprints matched the phase 0 baseline exactly -- `015ED3D109C5CCCC` for
+Hilbergen and `29B52DBB6E7D2558` for wentbourne -- confirming the phase changed no
+behaviour. 102 of 102 tests pass. wentbourne ran at 20.9 ticks/s against a phase 0
+baseline of 19.3 to 20.5, i.e. no measurable cost from the per-tick sort call, which
+is expected since it early-returns unless the structure changed.
+
+Note that load and new-game both exercise pool cleaning: OpenTTD generates an intro
+map before switching to the requested game, so by the time a savegame loads the pools
+have already been cleaned and repopulated at least once.
 
 ### Phase 2 -- First real components: sprite and viewport cache (CLEAR)
 

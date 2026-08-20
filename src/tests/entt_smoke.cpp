@@ -88,7 +88,10 @@ TEST_CASE("Views iterate in reverse packed order")
 	/* Worth pinning down explicitly because it is a genuine surprise: a view walks the
 	 * packed array backwards, so entities come out in reverse creation order even when
 	 * nothing has been removed. Any code that assumes "first created, first visited"
-	 * is wrong from the outset, before history dependence enters the picture. */
+	 * is wrong from the outset, before history dependence enters the picture.
+	 *
+	 * This is visible only on unsorted storage. sparse_set::begin() starts at
+	 * packed.size() and dereferences packed[offset - 1], walking down to packed[0]. */
 	entt::registry registry;
 
 	for (uint32_t i = 0; i < 8; i++) {
@@ -134,7 +137,12 @@ TEST_CASE("Sorting by a stable key restores canonical order")
 	 *
 	 * Note that a 'less than' comparator yields ascending iteration despite the reversed
 	 * walk, i.e. sort arranges storage so that iteration matches the comparator. That is
-	 * the behaviour the migration relies on to reproduce OpenTTD's ascending-index order. */
+	 * the behaviour the migration relies on to reproduce OpenTTD's ascending-index order.
+	 *
+	 * The two reversals cancel by design: sort_n sorts through reverse iterators
+	 * (packed.rend() - length, packed.rend()), leaving the array physically descending,
+	 * and iteration then walks it backwards. So the reversed walk is invisible as long
+	 * as the storage is sorted, and only leaks on unsorted storage as above. */
 	entt::registry registry;
 
 	std::vector<entt::entity> entities;

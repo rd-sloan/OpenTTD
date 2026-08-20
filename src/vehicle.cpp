@@ -43,6 +43,7 @@
 #include "sound_func.h"
 #include "effectvehicle_func.h"
 #include "effectvehicle_base.h"
+#include "vehicle_registry.h"
 #include "vehiclelist.h"
 #include "bridge_map.h"
 #include "tunnel_map.h"
@@ -379,6 +380,11 @@ void VehicleLengthChanged(const Vehicle *u)
  */
 Vehicle::Vehicle(VehicleID index, VehicleType type) : VehiclePool::PoolItem<&_vehicle_pool>(index)
 {
+	/* Keep the ECS registry in lockstep with the pool. This is the only creation
+	 * hook needed: Pool::CreateAtIndex forwards to this constructor, so savegame
+	 * load comes through here too. @see vehicle_registry.cpp */
+	RegisterVehicleEntity(index);
+
 	this->type               = type;
 	this->coord.left         = INVALID_COORD;
 	this->sprite_cache.old_coord.left = INVALID_COORD;
@@ -893,6 +899,11 @@ void Vehicle::PreDestructor()
 
 Vehicle::~Vehicle()
 {
+	/* Before the CleaningPool() early return below, so that wholesale pool cleaning
+	 * on new game or load empties the registry too. CleanPool deletes every item
+	 * individually, so this runs once per vehicle either way. */
+	UnregisterVehicleEntity(this->index);
+
 	if (CleaningPool()) {
 		this->cargo.OnCleanPool();
 		return;
@@ -984,6 +995,12 @@ static void RunEconomyVehicleDayProc()
 
 void CallVehicleTicks()
 {
+	/* Restore canonical iteration order before anything walks the registry. Cheap when
+	 * no vehicle was created or destroyed since the last tick. Nothing depends on the
+	 * registry yet in phase 1, but this is the call site later phases rely on, so it
+	 * is established here where it can be validated in isolation. */
+	SortVehicleRegistry();
+
 	_vehicles_to_autoreplace.clear();
 
 	RunEconomyVehicleDayProc();

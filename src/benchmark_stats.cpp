@@ -45,6 +45,7 @@
 #include "town.h"
 #include "train.h"
 #include "vehicle_base.h"
+#include "vehicle_registry.h"
 
 #include "safeguards.h"
 
@@ -254,6 +255,13 @@ void WriteBenchmarkStats(std::string_view filename, uint ticks, uint64_t wallclo
 		fmt::print(f, "perf.all_vehicles.ns_per_object_tick\t{:.1f}\n",
 				1000.0 * static_cast<double>(vehicles_us) / (static_cast<double>(ticks) * static_cast<double>(wl.vehicle_parts)));
 	}
+
+	/* ECS registry state. The validity flag is the phase 1 exit criterion: it checks
+	 * one entity per pooled vehicle, a correct identity mapping in both directions, and
+	 * ascending VehicleID iteration order. Reported after a full run so that it covers
+	 * the vehicle creation and destruction that happened during it. */
+	fmt::print(f, "ecs.vehicle_entities\t{}\n", GetVehicleEntityCount());
+	fmt::print(f, "ecs.registry_valid\t{}\n", ValidateVehicleRegistry() ? 1 : 0);
 
 	/* A fingerprint of the game state, which is how a phase proves it changed nothing.
 	 * See state_fingerprint.cpp for why this exists rather than comparing savegames. */
