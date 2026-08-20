@@ -614,8 +614,10 @@ void UpdateAircraftCache(Aircraft *v, bool update_range)
 
 	/* Update cargo aging period. */
 	v->vcache.cached_cargo_age_period = GetVehicleProperty(v, PROP_AIRCRAFT_CARGO_AGE_PERIOD, EngInfo(v->engine_type)->cargo_age_period);
+	v->SyncVehicleCache();
 	Aircraft *u = v->Next(); // Shadow for mail
 	u->vcache.cached_cargo_age_period = GetVehicleProperty(u, PROP_AIRCRAFT_CARGO_AGE_PERIOD, EngInfo(u->engine_type)->cargo_age_period);
+	u->SyncVehicleCache();
 
 	/* Update aircraft range. */
 	if (update_range) {

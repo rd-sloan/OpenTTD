@@ -168,6 +168,8 @@ add_files(
     dropdown_func.h
     dropdown_type.h
     economy.cpp
+    ecs_shadow.cpp
+    ecs_shadow.h
     economy_base.h
     economy_cmd.h
     economy_func.h

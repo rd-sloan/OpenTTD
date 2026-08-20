@@ -31,6 +31,7 @@
 #include "core/enum_type.hpp"
 #include "core/format.hpp"
 #include "debug.h"
+#include "ecs_shadow.h"
 #include "fileio_func.h"
 #include "framerate_type.h"
 #include "industry.h"
@@ -263,6 +264,16 @@ void WriteBenchmarkStats(std::string_view filename, uint ticks, uint64_t wallclo
 	 * the vehicle creation and destruction that happened during it. */
 	fmt::print(f, "ecs.vehicle_entities\t{}\n", GetVehicleEntityCount());
 	fmt::print(f, "ecs.registry_valid\t{}\n", ValidateVehicleRegistry() ? 1 : 0);
+
+	/* Shadow verification for fields mid-migration. Mismatches must be zero; a non-zero
+	 * comparison count with zero mismatches is the passing state. Comparisons of zero
+	 * means shadow mode was compiled out, which is not a pass. @see ecs_shadow.h */
+	for (ShadowCheck check : EnumRange(ShadowCheck::End)) {
+		const ShadowCheckResult result = GetShadowCheckResult(check);
+		const std::string_view name = GetShadowCheckName(check);
+		fmt::print(f, "shadow.{}.comparisons\t{}\n", name, result.comparisons);
+		fmt::print(f, "shadow.{}.mismatches\t{}\n", name, result.mismatches);
+	}
 
 
 	/* A fingerprint of the game state, which is how a phase proves it changed nothing.

@@ -241,6 +241,7 @@ void Ship::UpdateCache()
 
 	/* Update cargo aging period. */
 	this->vcache.cached_cargo_age_period = GetVehicleProperty(this, PROP_SHIP_CARGO_AGE_PERIOD, EngInfo(this->engine_type)->cargo_age_period);
+	this->SyncVehicleCache();
 
 	this->UpdateVisualEffect();
 }

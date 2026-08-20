@@ -249,10 +249,12 @@ void RoadVehUpdateCache(RoadVehicle *v, bool same_length)
 
 		/* Update cargo aging period. */
 		u->vcache.cached_cargo_age_period = GetVehicleProperty(u, PROP_ROADVEH_CARGO_AGE_PERIOD, EngInfo(u->engine_type)->cargo_age_period);
+		u->SyncVehicleCache();
 	}
 
 	uint max_speed = GetVehicleProperty(v, PROP_ROADVEH_SPEED, 0);
 	v->vcache.cached_max_speed = (max_speed != 0) ? max_speed * 4 : RoadVehInfo(v->engine_type)->max_speed;
+	v->SyncVehicleCache();
 }
 
 /**

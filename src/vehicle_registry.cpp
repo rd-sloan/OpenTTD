@@ -133,6 +133,7 @@ void RegisterVehicleEntity(VehicleID id)
 	/* Components every vehicle has. Attached eagerly because they are universal; a
 	 * component that only some vehicles need would be better emplaced on demand. */
 	data.registry.emplace<VehicleColourMap>(entity);
+	data.registry.emplace<VehicleCacheComponent>(entity);
 
 	data.entity_by_vehicle_id[index] = entity;
 

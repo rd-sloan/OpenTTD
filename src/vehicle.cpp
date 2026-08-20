@@ -43,6 +43,7 @@
 #include "sound_func.h"
 #include "effectvehicle_func.h"
 #include "effectvehicle_base.h"
+#include "ecs_shadow.h"
 #include "vehicle_components.h"
 #include "vehicle_registry.h"
 #include "vehiclelist.h"
@@ -716,6 +717,51 @@ void Vehicle::InvalidateColourMap() const
 }
 
 /**
+ * Get this vehicle's consist-derived cache for reading.
+ *
+ * While the migration is in progress this also shadow-verifies the component against
+ * the `vcache` member still on this struct, so a divergence is counted rather than
+ * silently changing the simulation. @see ecs_shadow.h
+ *
+ * @return The cached consist values.
+ */
+const VehicleCache &Vehicle::GetVehicleCache() const
+{
+	const VehicleCache &shadow = GetVehicleRegistry().get<VehicleCacheComponent>(GetVehicleEntity(this->index)).cache;
+	return ShadowVerify(ShadowCheck::VehicleCache, this->vcache, shadow);
+}
+
+/**
+ * Get this vehicle's consist-derived cache for writing.
+ *
+ * Writes go to the component; the `vcache` member is kept in step by the caller for as
+ * long as shadow verification is in place.
+ *
+ * @return The cached consist values.
+ */
+VehicleCache &Vehicle::GetMutableVehicleCache()
+{
+	return GetVehicleRegistry().get<VehicleCacheComponent>(GetVehicleEntity(this->index)).cache;
+}
+
+/**
+ * Copy the `vcache` member into the component, keeping the two in step while shadow
+ * verification is in place.
+ *
+ * Called after every write to `vcache`. That is the whole point of the shadow check
+ * here: it does not verify a computation, it verifies *coverage*. If a write site was
+ * missed, the component goes stale, and the next read reports a mismatch. With
+ * forty-seven usage sites across nine files, "did I find them all" is the real risk.
+ *
+ * Redundant calls are harmless, so it is placed after each individual write rather
+ * than once per function, which removes the need to reason about control flow.
+ */
+void Vehicle::SyncVehicleCache()
+{
+	this->GetMutableVehicleCache() = this->vcache;
+}
+
+/**
  * Discard every vehicle's cached colour remapping.
  *
  * Called when a livery or a colour setting changes, not from the game loop.
@@ -1076,11 +1122,14 @@ void CallVehicleTicks()
 			case VehicleType::Ship: {
 				Vehicle *front = v->First();
 
-				if (v->vcache.cached_cargo_age_period != 0) {
-					v->cargo_age_counter = std::min(v->cargo_age_counter, v->vcache.cached_cargo_age_period);
+				/* One lookup for three reads. Resolving the accessor per read is what
+				 * cost 74% of the game loop in phase 2. @see ecs_shadow.h */
+				const uint16_t cargo_age_period = v->GetVehicleCache().cached_cargo_age_period;
+				if (cargo_age_period != 0) {
+					v->cargo_age_counter = std::min(v->cargo_age_counter, cargo_age_period);
 					if (--v->cargo_age_counter == 0) {
 						v->cargo.AgeCargo();
-						v->cargo_age_counter = v->vcache.cached_cargo_age_period;
+						v->cargo_age_counter = cargo_age_period;
 					}
 				}
 
@@ -2790,6 +2839,7 @@ void Vehicle::UpdateVisualEffect(bool allow_power_change)
 	}
 
 	this->vcache.cached_vis_effect = visual_effect;
+	this->SyncVehicleCache();
 
 	if (!allow_power_change && powered_before != HasBit(this->vcache.cached_vis_effect, VE_DISABLE_WAGON_POWER)) {
 		ToggleBit(this->vcache.cached_vis_effect, VE_DISABLE_WAGON_POWER);

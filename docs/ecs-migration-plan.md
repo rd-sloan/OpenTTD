@@ -726,7 +726,107 @@ criterion is the one thing this harness cannot check: colour remapping is
 presentation, so it is absent from the fingerprint by design. It wants a human
 looking at a running game with more than one company livery.
 
-### Phase 3 -- Game-state sweeps under shadow mode (CAUTION)
+### Phase 3 -- Shadow mode (CAUTION) -- done, re-scoped
+
+The premise here was "pick the cheapest game-state sweeps first". That premise does
+not hold, for the same reason phase 2's did not: grepping every full-pool loop that
+writes a saved field shows they live almost entirely in `afterload.cpp` and
+`vehicle_sl.cpp`, i.e. one-time savegame migration. `CallVehicleTicks` is the only
+hot full-pool loop in the game, and converting *that* is phase 4 and 5 work.
+
+So this phase delivered its durable half instead: **the shadow-mode scaffolding**,
+in `src/ecs_shadow.{h,cpp}`, demonstrated on `VehicleCache`.
+
+`VehicleCache` was chosen because it is the one field group that is
+game-state-affecting but *not* serialised -- `cached_max_speed` drives movement and
+`cached_cargo_age_period` drives cargo ageing, while the single mention of `vcache`
+in `vehicle_sl.cpp` is a read during afterload rather than a descriptor. That makes
+it a genuine CAUTION target without also needing the save-staging machinery, which
+can wait for phase 4 where the motion fields really are saved.
+
+**What shadow mode actually verifies here.** Writes still go to the `vcache` member,
+with a `SyncVehicleCache()` call after each one, and reads go through an accessor
+that compares the two copies. So the check does not verify a computation -- the
+component is a copy -- it verifies **coverage**: if a write site was missed, the
+component goes stale and the next read reports a mismatch. With 47 usage sites
+across 9 files, "did I find all 11 writes" is the actual risk.
+
+**Counting beats asserting.** An assert stops at the first divergence and tells you
+only that something is wrong. A counter lets the run finish and reports mismatches
+against total comparisons, which says how *often*, and that usually suggests why.
+The counts surface as `shadow.<name>.mismatches` in the benchmark report, so the
+exit criterion is checked rather than asserted. Note that a comparison count of
+zero is not a pass: it means shadow mode was compiled out, which is the normal
+state of the release tree.
+
+**Results.** Zero mismatches everywhere:
+
+| Run | Comparisons | Mismatches |
+| --- | --- | --- |
+| Hilbergen, Debug, 20,000 ticks | 54,614,511 | 0 |
+| wentbourne, Debug, 500 ticks | 42,564,438 | 0 |
+
+The wentbourne run matters more than its tick count suggests: coverage comes from
+vehicle diversity rather than run length, and it exercises all four types at once
+(4,833 train, 5,499 road, 2,818 ship and 749 aircraft consists). Fingerprints
+matched the baseline on both saves, and the Hilbergen match was between a *Debug*
+run and a *release-tree* baseline, which is further confirmation that the
+fingerprint is build-independent.
+
+**It costs 2.4%, and that is measurable rather than noise.** Repeated 20,000-tick
+Hilbergen runs on a quiet machine:
+
+| Set | `GameLoop` samples | Median |
+| --- | --- | --- |
+| Before | 6610.3, 6579.9 ms | 6595 ms |
+| After | 6772.5, 6734.9, 6746.3 ms | 6751 ms |
+
+Within-set spread is about 0.3%, so +2.4% is a real effect. Shadow mode is compiled
+out of the release tree, so this is not verification overhead -- it is the accessor
+indirection itself, one registry lookup per vehicle per tick in `CallVehicleTicks`
+plus one in `GetAcceleration`.
+
+That is the cost of the seam, measured cleanly, and it is the number phase 4 has to
+beat. Nine motion fields read several times per tick cannot pay for themselves
+through accessors alone; the win has to come from converting the tick loop to
+iterate views, so that the lookup is amortised across a packed walk instead of
+repeated per vehicle. Phase 3 quantifies what phase 4 is up against.
+
+Two details worth carrying forward. First, **the cost is larger on the stress save,
+but its magnitude there is not yet pinned down.** Three wentbourne samples came in
+at 206.9, 211.8 and 228.2 seconds against a single 195.0 second baseline, so the
+direction is consistent -- every sample is slower -- but the spread across those
+three is 10.4%, which is far too wide to quote a figure from. Somewhere between 6%
+and 17%, and it needs interleaved sampling to narrow.
+
+That spread is itself the finding: **long runs are much noisier than short ones**,
+which inverts the usual intuition that a longer run averages noise out. Hilbergen
+takes nine seconds and repeats to 0.3%; wentbourne takes three and a half minutes
+and repeats to 10%, climbing monotonically across consecutive runs in a way that
+looks like thermal throttling. Short runs for precision, long runs for coverage,
+and interleave A/B samples rather than running all of one then all of the other.
+
+Second, **the cost landed outside the vehicle accumulators**, which is initially
+confusing: on wentbourne `GameLoop` rose while `all_vehicles.pct_of_game_loop` fell
+from 83.2% to 79.7%. That is consistent rather than contradictory. The cargo-ageing
+block in `CallVehicleTicks` sits inside the full-pool loop but outside the per-type
+`PerformanceAccumulator` scopes, so work added there is counted in `GameLoop` and
+not in `GameLoopTrains` and friends. A share moving in the unexpected direction is
+worth chasing down rather than shrugging at -- here it confirmed the cost was
+exactly where the change was.
+
+**Also corrected: the noise band.** This document previously said absolute timings
+vary by up to 15%. That was measured with compiles running in parallel and is badly
+wrong as guidance -- it would have dismissed this 2.4% regression. On a quiet
+machine repeatability is around 0.3%, and the rule is three samples and a median,
+discarding the first run after a build, which is consistently slow from cold caches.
+
+**Exit: met.** Shadow mismatches zero on both saves, fingerprints unchanged,
+registry valid, both configurations build, 102 of 102 tests pass. The `vcache`
+member is deliberately still present: shadow mode requires both copies, and
+deleting it is the follow-up once the remaining read sites move over.
+
+### Phase 3 -- original plan (superseded above)
 
 The same mechanical work, but on fields the simulation reads -- so the canonical
 sort becomes load-bearing and shadow mode comes on.

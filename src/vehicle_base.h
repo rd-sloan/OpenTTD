@@ -370,6 +370,16 @@ public:
 	void SetColourMap(PaletteID map) const;
 	void InvalidateColourMap() const;
 
+	/* Consist-derived cache, migrating to the VehicleCacheComponent under shadow
+	 * verification. Both copies exist for now; `vcache` below is still authoritative
+	 * for writes, and the read accessor compares the two. @see ecs_shadow.h
+	 *
+	 * Resolve this ONCE per function and work through the reference. Calling it per
+	 * field access is what cost 74% of the game loop in phase 2. */
+	const VehicleCache &GetVehicleCache() const;
+	VehicleCache &GetMutableVehicleCache();
+	void SyncVehicleCache();
+
 	/**
 	 * Is this vehicle moving backwards?
 	 * @return \c true iff the vehicle is moving backwards.

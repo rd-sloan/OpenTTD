@@ -205,6 +205,7 @@ void Train::ConsistChanged(ConsistChangeFlags allowed_changes)
 			if (new_cap != u->cargo_cap) ShowNewGrfVehicleError(u->engine_type, STR_NEWGRF_BROKEN, STR_NEWGRF_BROKEN_CAPACITY, GRFBug::VehCapacity, true);
 		}
 		u->vcache.cached_cargo_age_period = GetVehicleProperty(u, PROP_TRAIN_CARGO_AGE_PERIOD, e_u->info.cargo_age_period);
+		u->SyncVehicleCache();
 
 		/* check the vehicle length (callback) */
 		uint16_t veh_len = CALLBACK_FAILED;
@@ -237,6 +238,7 @@ void Train::ConsistChanged(ConsistChangeFlags allowed_changes)
 
 	/* store consist weight/max speed in cache */
 	this->vcache.cached_max_speed = max_speed;
+	this->SyncVehicleCache();
 	this->tcache.cached_tilt = train_can_tilt;
 	this->tcache.cached_curve_speed_mod = min_curve_speed_mod;
 	this->tcache.cached_max_curve_speed = this->GetCurveSpeedLimit();

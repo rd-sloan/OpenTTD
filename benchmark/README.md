@@ -43,6 +43,12 @@ always equal `load.vehicle_parts`, and `ecs.registry_valid` must be 1 -- it chec
 entity per pooled vehicle, a correct identity mapping in both directions, and ascending
 `VehicleID` iteration order. Both are cheap to eyeball and worth checking on every run.
 
+The `shadow.` keys track fields part way through migration, where the value lives both on
+`Vehicle` and in a component and every read compares the two. `mismatches` must be zero.
+Note that `comparisons` of zero is **not** a pass: it means shadow mode was compiled out,
+which is the normal state of the `build-release` tree. A shadow run needs `-BuildDir
+build`, or a release build with `OTTD_ECS_SHADOW` defined. See `src/ecs_shadow.h`.
+
 Each `perf.<group>` entry carries five figures, which answer different questions:
 
 | Key | Meaning |
@@ -190,18 +196,43 @@ the game loop on Wentbourne and 79% on Hilbergen.
 
 ## Timing noise
 
-Absolute timings move by up to about 15% between invocations if the machine is doing
-anything else. Two runs inside a single `-CheckDeterminism` invocation agreed to 1.2%
-(10854 ms against 10720 ms), but separate invocations taken while a compile was running
-ranged from 9388 ms to 10854 ms for identical work.
+**On a quiet machine the harness is far more precise than first thought.** Repeated
+20,000-tick Hilbergen runs with no other work in progress:
 
-The derived ratios are far steadier. Across those same runs `perf.trains.pct_of_game_loop`
-stayed within 78.4% to 79.4%, while `ns_per_object_tick` swung from 114 to 128 purely on
-machine load.
+| Set | `perf.game_loop.total_ms` | Spread |
+| --- | --- | --- |
+| Before a change | 6610.3, 6579.9 | 0.5% |
+| After a change | 6772.5, 6734.9, 6746.3 | 0.6% |
 
-So: run benchmarks on an otherwise idle machine, prefer `pct_of_game_loop` when comparing
-across sessions, and for absolute figures take the best of several runs rather than one.
-A change under about 15% in absolute time is not evidence of anything on its own.
+That is roughly 0.3% either side of the mean, which resolves the 2.4% difference between
+those two sets as a real effect rather than noise.
+
+An earlier version of this file claimed a 15% noise band. That figure was measured while
+compiles were running in parallel, and it is badly wrong as general guidance: applying it
+would have dismissed a genuine regression. Machine load, not the harness, was the noise.
+
+**Long runs are much noisier than short ones**, which inverts the usual intuition that a
+longer run averages noise out. The same change measured on both fixtures:
+
+| Fixture | Run length | Samples | Spread |
+| --- | --- | --- | --- |
+| Hilbergen, 20,000 ticks | ~9 s | 6772, 6735, 6746 ms | 0.6% |
+| wentbourne, 5,000 ticks | ~3.5 min | 206.9, 211.8, 228.2 s | 10.4% |
+
+The wentbourne samples climb monotonically across consecutive runs, which looks like
+thermal throttling. So a 3.5-minute run cannot resolve a few percent, no matter how many
+times it is repeated back to back.
+
+So: **run benchmarks with nothing else running, take three samples, and use the median.**
+On Hilbergen that resolves differences above roughly 1%. On wentbourne, expect no better
+than about 10% unless samples are interleaved (A, B, A, B) with a pause between them, so
+prefer Hilbergen for precision and wentbourne for coverage and scale.
+
+Discard any sample taken immediately after a build — the first run after a rebuild is
+consistently slow, at 6991 ms against a 6751 ms median above, presumably cold caches.
+
+`pct_of_game_loop` remains the right thing to compare across sessions or machines, since
+it divides out whatever the absolute speed happened to be.
 
 ## Things that will waste your afternoon
 
