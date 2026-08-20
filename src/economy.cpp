@@ -456,7 +456,7 @@ void ChangeOwnershipOfCompanyItems(Owner old_owner, Owner new_owner)
 				v->owner = new_owner;
 
 				/* Owner changes, clear cache */
-				v->colourmap = PAL_NONE;
+				v->InvalidateColourMap();
 				v->InvalidateNewGRFCache();
 
 				if (v->IsEngineCountable()) {

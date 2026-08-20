@@ -305,7 +305,7 @@ Trackdir Ship::GetVehicleTrackdir() const
 
 void Ship::MarkDirty()
 {
-	this->colourmap = PAL_NONE;
+	this->InvalidateColourMap();
 	this->UpdateViewport(true, false);
 	this->UpdateCache();
 }

@@ -240,7 +240,7 @@ public:
 	Vehicle **hash_tile_prev = nullptr; ///< NOSAVE: Previous vehicle in the tile location hash.
 	Vehicle **hash_tile_current = nullptr; ///< NOSAVE: Cache of the current hash chain.
 
-	SpriteID colourmap{}; ///< NOSAVE: cached colour mapping
+	/* colourmap moved to the VehicleColourMap component. @see GetColourMap */
 
 	/* Related to age and service time */
 	TimerGameCalendar::Year build_year{}; ///< Year the vehicle has been built.
@@ -360,6 +360,15 @@ public:
 	 * for this vehicle.
 	 */
 	virtual void UpdateDeltaXY() {}
+
+	/* Cached colour remapping, held in the VehicleColourMap component rather than in
+	 * this struct. These accessors are the seam: call sites do not know or care where
+	 * the data lives, so a later phase can change its storage again without touching
+	 * them. All three are const because the value is a cache and not part of the
+	 * vehicle's identity, which is the same reasoning that made #coord mutable. */
+	PaletteID GetColourMap() const;
+	void SetColourMap(PaletteID map) const;
+	void InvalidateColourMap() const;
 
 	/**
 	 * Is this vehicle moving backwards?

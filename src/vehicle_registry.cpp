@@ -43,6 +43,7 @@
 #include "vehicle_registry.h"
 
 #include "vehicle_base.h"
+#include "vehicle_components.h"
 
 #include "safeguards.h"
 
@@ -128,6 +129,11 @@ void RegisterVehicleEntity(VehicleID id)
 
 	const entt::entity entity = data.registry.create();
 	data.registry.emplace<VehicleRef>(entity, id);
+
+	/* Components every vehicle has. Attached eagerly because they are universal; a
+	 * component that only some vehicles need would be better emplaced on demand. */
+	data.registry.emplace<VehicleColourMap>(entity);
+
 	data.entity_by_vehicle_id[index] = entity;
 
 	data.dirty = true;

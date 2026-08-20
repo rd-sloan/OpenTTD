@@ -499,28 +499,101 @@ Note that load and new-game both exercise pool cleaning: OpenTTD generates an in
 map before switching to the requested game, so by the time a savegame loads the pools
 have already been cleaned and repopulated at least once.
 
-### Phase 2 -- First real components: sprite and viewport cache (CLEAR)
+### Phase 2 -- First real components (CLEAR) -- done, re-scoped
 
-This is the learning phase, chosen because it is unable to hurt you.
-`MutableSpriteCache`, `colourmap`, `coord` and `bounds` are all marked `NOSAVE`
-and are purely client-side presentation: they are absent from the savegame and
-cannot cause a desync, so both hard constraints are suspended.
+This was meant to move `MutableSpriteCache`, `colourmap`, `coord` and `bounds`
+into components and win on `ViewportDrawing`. Two things found on contact changed
+the phase, and both are worth recording because they invalidate reasoning above.
 
-Move them into components and convert the drawing-side sweeps, of which this is
-the archetype:
+**`sprite_cache` is not NOSAVE.** It is serialised, unconditionally, in two
+descriptor lists:
 
 ```c++
-for (Vehicle *v : Vehicle::Iterate()) { v->colourmap = PAL_NONE; }
-/* vehicle.cpp:689 -- strides ~600 bytes to write 4 */
+SLE_VAR(Vehicle, sprite_cache.sprite_seq.seq[0].sprite, VarFileType::U16 | VarMemType::U32),
+/* vehicle_sl.cpp:1018 in SlVehicleEffect, and :1073 in SlVehicleDisaster */
 ```
 
-Expect a large multiple on that specific loop.
-Use the phase to settle the idioms: how views are obtained, where the sort
-happens, how the legacy accessors forward.
-`ViewportDrawing` is a real cost centre, so this is not busywork.
+Which makes sense in hindsight: effect vehicles (smoke, sparks) and disaster
+vehicles have no engine to regenerate a sprite from, so the sprite id *is* game
+state. Moving `sprite_cache` therefore has save-format contact and violates the
+defining property of this phase, so it is deferred to phase 7 where the staging
+struct technique is already on the table.
 
-**Exit:** standard criteria, plus no visual regressions when panning, zooming or
-following vehicles; `ViewportDrawing` timing recorded.
+**The sweeps are cold, so the headline win was illusory.** `ResetVehicleColourMap`
+is called from a company colour change, company creation and bankruptcy, and one
+settings change. `ResetVehicleHash` is called from `afterload.cpp` and
+`InitializeVehicles`. None of them run from the game loop. "Expect a large
+multiple on that specific loop" was true and worthless: the loop runs on user
+actions, not per tick.
+
+Worse, `colourmap` is a *memoisation cache* read by `GetEngineColourMap` once per
+vehicle per draw, so moving it behind an accessor adds indirection to the path
+that actually runs and speeds up a path that essentially never does. The phase is
+perf-neutral by design, not a win. That is a genuinely useful thing to have
+learned early: "move hot fields into components" does not imply "move every
+NOSAVE field", and a cache read per draw can be better off as a plain field.
+
+**What was actually done.** `colourmap` moved to a `VehicleColourMap` component
+(`src/vehicle_components.h`), which is the exemplar rather than the whole job. The
+transferable result is the shape:
+
+- A component holding the data, defaulted so no constructor initialisation is needed.
+- An **accessor seam** on `Vehicle` -- `GetColourMap`, `SetColourMap`,
+  `InvalidateColourMap` -- so the sixteen call sites do not know where the data
+  lives. This is the part that makes later phases cheap: storage can move again
+  without touching call sites. All three are `const`, because the value is a cache
+  rather than part of the vehicle's identity, which is the same reasoning that
+  already made `coord` and `sprite_cache` `mutable`. Two `const_cast`s disappeared
+  as a side effect.
+- The sweep as `view<T>().each(callback)`, which uses EnTT's positional fast path
+  for `swap_and_pop` storage rather than going through entity indirection.
+- Eager attachment alongside `VehicleRef`, appropriate because every vehicle needs
+  one. A component only some vehicles need should be emplaced on demand instead.
+
+The sweep is deliberately **not** sorted, and says so in a comment: clearing every
+element is order-independent, and the component cannot influence game state. This
+is the case the phase 0 finding warned about, where EnTT's reversed walk is
+visible -- so the comment records that nothing may depend on the order.
+
+**Results.** `sizeof(Vehicle)` fell from 552 to 544 bytes, which is the first
+concrete layout win and is deterministic rather than noise.
+
+That is 8 bytes for removing a 4 byte field, which is worth understanding rather
+than banking. Measured by re-adding a 4 byte probe in the same slot and diffing
+member offsets: `build_year` shifted by 4 as expected, but everything from
+`last_loading_tick` onwards shifted by 8. `last_loading_tick` is a
+`TimerGameTick::TickCounter`, i.e. 64 bits, so it needs 8 byte alignment -- and
+`colourmap`'s presence pushed the run of 4 byte fields before it onto an odd 4
+byte boundary, forcing 4 bytes of padding to realign it. Removing `colourmap`
+happened to land that run exactly on an 8 byte boundary.
+
+So the field cost 8 bytes: its own 4, plus 4 it forced elsewhere. The general
+lesson is that a struct's shrinkage is a function of *where* a field sat, not
+just how big it was: moving a different 4 byte field could easily yield nothing
+at all. Do not extrapolate per-field savings from this one. Fingerprints were
+unchanged on both saves (`015ED3D109C5CCCC`, `29B52DBB6E7D2558`), the registry
+stayed valid at 2,818 and 85,259 entities, and 102 of 102 tests pass.
+
+A temporary probe verified the accessor seam does not alias: it wrote a distinct
+value to all 2,819 vehicles and confirmed every one read back its own, which is
+the failure mode that nothing else in the harness would have caught. It was
+removed afterwards, since a stats function should not mutate state.
+
+Drawing timings could not resolve anything. Across phases 0, 1 and 2 the Hilbergen
+`Drawing` total was 1516, 2022 and 1782 ms -- and phase 1 changed no drawing code
+at all, so a 33% swing there is pure machine noise. No claim either way is
+defensible from this harness.
+
+**Deferred, with reasons.** `sprite_cache`, as above. `coord` (41 sites in 3
+files) and `bounds` (82 sites in 8 files) would repeat the same pattern for no
+measurable gain and no new learning, and `bounds` is not even marked `NOSAVE`
+despite appearing in no descriptor. Worth doing only as practice.
+
+**Exit: met.** Builds in both configurations, both saves load and play,
+fingerprints unchanged, registry valid, regression suite green. The visual
+criterion is the one thing this harness cannot check: colour remapping is
+presentation, so it is absent from the fingerprint by design. It wants a human
+looking at a running game with more than one company livery.
 
 ### Phase 3 -- Game-state sweeps under shadow mode (CAUTION)
 

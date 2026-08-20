@@ -400,7 +400,7 @@ CommandCost CmdTurnRoadVeh(DoCommandFlags flags, VehicleID veh_id)
 void RoadVehicle::MarkDirty()
 {
 	for (RoadVehicle *v = this; v != nullptr; v = v->Next()) {
-		v->colourmap = PAL_NONE;
+		v->InvalidateColourMap();
 		v->UpdateViewport(true, false);
 	}
 	this->CargoChanged();

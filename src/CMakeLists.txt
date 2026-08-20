@@ -575,6 +575,7 @@ add_files(
     vehicle_gui.cpp
     vehicle_gui.h
     vehicle_gui_base.h
+    vehicle_components.h
     vehicle_registry.cpp
     vehicle_registry.h
     vehicle_type.h

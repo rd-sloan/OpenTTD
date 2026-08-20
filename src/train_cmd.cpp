@@ -160,7 +160,7 @@ void Train::ConsistChanged(ConsistChangeFlags allowed_changes)
 		u->tcache.cached_override = GetWagonOverrideSpriteSet(u->engine_type, u->cargo_type, u->gcache.first_engine);
 
 		/* Reset colour map */
-		u->colourmap = PAL_NONE;
+		u->InvalidateColourMap();
 
 		/* Update powered-wagon-status and visual effect */
 		u->UpdateVisualEffect(true);
@@ -3051,7 +3051,7 @@ void Train::MarkDirty()
 {
 	Train *v = this;
 	do {
-		v->colourmap = PAL_NONE;
+		v->InvalidateColourMap();
 		v->UpdateViewport(true, false);
 	} while ((v = v->Next()) != nullptr);
 

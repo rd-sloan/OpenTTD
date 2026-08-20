@@ -219,6 +219,7 @@ void WriteBenchmarkStats(std::string_view filename, uint ticks, uint64_t wallclo
 	 * meaningful on front vehicles. Multiply by (vehicle_parts - vehicle_primary) for
 	 * the dead weight, which is what phase 7 is aiming to remove. */
 	fmt::print(f, "sizeof.BaseConsist\t{}\n", sizeof(BaseConsist));
+
 	fmt::print(f, "sizeof.Station\t{}\n", sizeof(Station));
 	fmt::print(f, "sizeof.Town\t{}\n", sizeof(Town));
 
@@ -262,6 +263,7 @@ void WriteBenchmarkStats(std::string_view filename, uint ticks, uint64_t wallclo
 	 * the vehicle creation and destruction that happened during it. */
 	fmt::print(f, "ecs.vehicle_entities\t{}\n", GetVehicleEntityCount());
 	fmt::print(f, "ecs.registry_valid\t{}\n", ValidateVehicleRegistry() ? 1 : 0);
+
 
 	/* A fingerprint of the game state, which is how a phase proves it changed nothing.
 	 * See state_fingerprint.cpp for why this exists rather than comparing savegames. */

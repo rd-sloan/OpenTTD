@@ -43,6 +43,7 @@
 #include "sound_func.h"
 #include "effectvehicle_func.h"
 #include "effectvehicle_base.h"
+#include "vehicle_components.h"
 #include "vehicle_registry.h"
 #include "vehiclelist.h"
 #include "bridge_map.h"
@@ -392,7 +393,7 @@ Vehicle::Vehicle(VehicleID index, VehicleType type) : VehiclePool::PoolItem<&_ve
 	this->fill_percent_te_id = INVALID_TE_ID;
 	this->first              = this;
 	this->last               = this;
-	this->colourmap          = PAL_NONE;
+	/* colourmap needs no initialisation here: VehicleColourMap defaults to PAL_NONE. */
 	this->cargo_age_counter  = 1;
 	this->last_station_visited = StationID::Invalid();
 	this->last_loading_station = StationID::Invalid();
@@ -690,9 +691,46 @@ void ResetVehicleHash()
 	_vehicle_tile_hash.fill(nullptr);
 }
 
+/**
+ * Get this vehicle's cached colour remapping.
+ * @return The cached palette, or #PAL_NONE if it has not been computed yet.
+ */
+PaletteID Vehicle::GetColourMap() const
+{
+	return GetVehicleRegistry().get<VehicleColourMap>(GetVehicleEntity(this->index)).map;
+}
+
+/**
+ * Store a computed colour remapping for this vehicle.
+ * @param map The palette to cache.
+ */
+void Vehicle::SetColourMap(PaletteID map) const
+{
+	GetVehicleRegistry().get<VehicleColourMap>(GetVehicleEntity(this->index)).map = map;
+}
+
+/** Discard this vehicle's cached colour remapping, so it is recomputed on next use. */
+void Vehicle::InvalidateColourMap() const
+{
+	this->SetColourMap(PAL_NONE);
+}
+
+/**
+ * Discard every vehicle's cached colour remapping.
+ *
+ * Called when a livery or a colour setting changes, not from the game loop.
+ *
+ * The view is deliberately not sorted. Clearing every element is order-independent, so
+ * the canonical ordering rule does not apply -- and this component holds presentation
+ * data that cannot influence the game state in the first place. Note that this means
+ * iteration here is in EnTT's own packed order, which is neither creation order nor
+ * ascending #VehicleID; nothing may depend on it.
+ */
 void ResetVehicleColourMap()
 {
-	for (Vehicle *v : Vehicle::Iterate()) { v->colourmap = PAL_NONE; }
+	GetVehicleRegistry().view<VehicleColourMap>().each([](VehicleColourMap &colour_map) {
+		colour_map.map = PAL_NONE;
+	});
 }
 
 /**
@@ -2136,7 +2174,7 @@ const Livery *GetEngineLivery(EngineID engine_type, CompanyID company, EngineID 
 
 static PaletteID GetEngineColourMap(EngineID engine_type, CompanyID company, EngineID parent_engine_type, const Vehicle *v)
 {
-	PaletteID map = (v != nullptr) ? v->colourmap : PAL_NONE;
+	PaletteID map = (v != nullptr) ? v->GetColourMap() : PAL_NONE;
 
 	/* Return cached value if any */
 	if (map != PAL_NONE) return map;
@@ -2154,7 +2192,7 @@ static PaletteID GetEngineColourMap(EngineID engine_type, CompanyID company, Eng
 			 * map else it's returned as-is. */
 			if (!HasBit(callback, 14)) {
 				/* Update cache */
-				if (v != nullptr) const_cast<Vehicle *>(v)->colourmap = map;
+				if (v != nullptr) v->SetColourMap(map);
 				return map;
 			}
 		}
@@ -2172,7 +2210,7 @@ static PaletteID GetEngineColourMap(EngineID engine_type, CompanyID company, Eng
 	map += livery->GetRecolourOffset(twocc);
 
 	/* Update cache */
-	if (v != nullptr) const_cast<Vehicle *>(v)->colourmap = map;
+	if (v != nullptr) v->SetColourMap(map);
 	return map;
 }
 
