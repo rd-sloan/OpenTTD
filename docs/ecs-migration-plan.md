@@ -353,10 +353,10 @@ Done:
   replaces byte-identical savegame comparison, wired into the report and into the
   runner's `-CheckDeterminism` and `-CompareTo` gates.
 
-Baseline, Hilbergen, RelWithDebInfo, 20000 ticks. Note that asserts are still
-enabled in this build tree (`OPTION_USE_ASSERTS=ON` applies to every
-configuration), so these are not clean release numbers; a separate build tree
-with asserts off would be better:
+Baseline, Hilbergen, RelWithDebInfo, 20000 ticks. **These figures were taken with
+asserts enabled and have since been superseded** -- see "Asserts were distorting
+the baseline" below. They are kept because the phase 1 and 2 comparisons were made
+against them.
 
 | Figure | Value |
 | --- | --- |
@@ -397,13 +397,14 @@ the roughly 33.3 needed for real time, so it is genuinely at the limit rather th
 merely large. Whatever fraction of that 215 s is attributable to memory layout is
 what phases 4 and 5 are competing for.
 
-**Read the two normalised columns together, because they disagree.** Per part,
-road vehicles look ten times worse than trains (3098 against 317 ns). Per consist
-the ranking reverses and trains are the more expensive by 1.6x (4924 against
-3098 ns). The parts-per-consist ratios explain it exactly: 15.6 for trains, 1.0
-for road vehicles and ships, 2.0 for aircraft, which carry a separate shadow part.
-A train consist does its pathfinding and order processing once and spreads the cost
-over sixteen parts; a road vehicle bears it alone.
+**Read the two normalised columns together, because they disagree.** On the
+corrected asserts-off figures, per part road vehicles look about eight times worse
+than trains (1986 against 261 ns), while per consist the ranking reverses and
+trains are 2.05x the more expensive (4061 against 1986 ns). The parts-per-consist
+ratios explain it exactly: 15.6 for trains, 1.0 for road vehicles and ships, 2.0
+for aircraft, which carry a separate shadow part. A train consist does its
+pathfinding and order processing once and spreads the cost over sixteen parts; a
+road vehicle bears it alone.
 
 The consequence for this plan is that the two figures answer different questions,
 and phases 4 and 5 care about different ones:
@@ -411,14 +412,90 @@ and phases 4 and 5 care about different ones:
 - Phase 4 moves hot fields into packed components, which helps whatever is walked
   per part. The 85,259 parts and the per-part column are the relevant measure, and
   trains dominate the part count by an order of magnitude.
-- Phase 5 devirtualises per-consist decision work. The per-consist column is the
-  relevant measure there, and it says road vehicles are worth as much attention as
-  trains despite being a fourteenth of the parts.
+- Phase 5 devirtualises per-consist decision work, so the per-consist column
+  governs. Trains lead there too, by a factor of two. Road vehicles remain the
+  clear second target -- 28% of the game loop from a fourteenth of the parts -- but
+  they are not the near-tie that the assert-on numbers implied.
 
 Determinism confirmed on this save too: two invocations separated by a rebuild both
 produced `state.hash.combined = 29B52DBB6E7D2558`.
 
 **Exit:** standard criteria, plus baseline timings and struct sizes recorded.
+
+### Asserts were distorting the baseline
+
+`OPTION_USE_ASSERTS` is a CMake cache variable and applies to every configuration
+in a tree, so the original `build` tree had asserts on even in `RelWithDebInfo`.
+A second tree, `build-release`, was configured with `OPTION_USE_ASSERTS=OFF`
+before starting phase 3, since everything from here depends on timings.
+
+That did not merely produce tidier numbers, it corrected a headline figure.
+Hilbergen, 20,000 ticks, same commit:
+
+| Figure | Asserts on | Asserts off | Change |
+| --- | --- | --- | --- |
+| Ticks per second | 2,082 | 2,505 | +20% |
+| `GameLoop` total | 7,971 ms | 6,610 ms | -17% |
+| `GameLoopTrains` total | 6,354 ms | 4,636 ms | **-27%** |
+| Trains, ns per part per tick | 116.4 | 84.9 | **-27%** |
+| Trains as share of game loop | 79.7% | **70.1%** | -9.6 pp |
+
+So the "trains are 79% of the game loop" figure from phase 0 was partly an
+artefact of assertion checking. The true share is around 70% -- still dominant,
+but nearly ten points lower, and the per-part cost that phases 4 and 5 are trying
+to beat is 85 ns rather than 116. Chasing the inflated number would have made any
+improvement look better than it was.
+
+wentbourne, 5,000 ticks, tells a subtler story. The *total* vehicle share barely
+moved, but the split between types did:
+
+| Element | Asserts on | Asserts off | Change |
+| --- | --- | --- | --- |
+| Ticks per second | 20.5 | 25.4 | +24% |
+| `GameLoop` total | 243,896 ms | 195,001 ms | -20% |
+| `GameLoopTrains` | 118,978 ms (46.3%) | 98,138 ms (**50.3%**) | -17.5% |
+| `GameLoopRoadVehicles` | 85,176 ms (33.1%) | 54,592 ms (**28.0%**) | **-36%** |
+| `GameLoopShips` | 8,249 ms (3.2%) | 7,087 ms (3.6%) | -14% |
+| `GameLoopAircraft` | 2,639 ms (1.0%) | 2,340 ms (1.2%) | -11% |
+| **All vehicle ticks** | 215,041 ms (83.7%) | 162,157 ms (**83.2%**) | -25% |
+
+Assertion checking was more than twice as expensive in road vehicle code as in
+train code, -36% against -17.5%. So the four vehicle elements were not merely
+inflated, they were inflated *unevenly*, and any prioritisation based on the
+assert-on split was skewed.
+
+The per-denominator figures move accordingly, and this is the part that changes a
+recommendation made earlier in this document:
+
+| Group | ns/part, on | ns/part, off | ns/consist, on | ns/consist, off |
+| --- | --- | --- | --- | --- |
+| Trains | 316.5 | 261.1 | 4923.6 | 4061.2 |
+| Road vehicles | 3097.9 | 1985.5 | 3097.9 | 1985.5 |
+
+Per consist, trains are now **2.05x** the cost of road vehicles rather than 1.6x.
+The earlier claim that road vehicles "deserve as much attention as trains" for
+phase 5 was reading assert overhead as vehicle cost. Trains dominate on both
+denominators; road vehicles are second by a clear margin, not a near tie.
+
+The fingerprint was **identical** across both trees on both saves
+(`015ED3D109C5CCCC`, `29B52DBB6E7D2558`), which is the empirical confirmation that
+asserts do not change game logic and that `-CompareTo` is valid between the two
+trees.
+
+Which tree to use:
+
+| Tree | Asserts | Purpose |
+| --- | --- | --- |
+| `build` | ON | Correctness: shadow-mode assertions, registry invariants, the test suite. |
+| `build-release` | OFF | Timings: every number that goes in a results table. |
+
+`benchmark/run-benchmark.ps1` now defaults to `build-release` and takes a
+`-BuildDir` parameter for the other. Report filenames include the tree name,
+because the timings are not interchangeable.
+
+One trap worth recording: a fresh build tree has no graphics set, because CMake
+only installs the basesets that ship with the source. Copy
+`baseset/opengfx-*.tar` across from an existing tree or the game will not start.
 
 ### Phase 0 aside: the regression suite was broken on Windows
 

@@ -60,10 +60,45 @@ so it distinguishes a real improvement from a savegame that merely has fewer veh
 Two vehicle denominators are reported because neither alone is honest; see
 [Parts and consists](#parts-and-consists) for what they mean and which to use when.
 
-Benchmark with `RelWithDebInfo` (the runner's default). A Debug build has asserts
-enabled and is roughly an order of magnitude slower, and the ratios between subsystems
-shift enough to point at the wrong hot spot. Use Debug for shadow-mode assertion work,
-Release for any number that goes in a results table.
+## Two build trees
+
+`OPTION_USE_ASSERTS` is a CMake cache variable and applies to every configuration in a
+tree, so a single tree cannot give both assert-checked correctness runs and clean
+timings. There are therefore two:
+
+| Tree | Asserts | Purpose |
+| --- | --- | --- |
+| `build` | ON | Correctness. Shadow-mode assertions, registry invariants, the test suite. |
+| `build-release` | OFF | Timings. Every number that goes in a results table. |
+
+The runner defaults to `build-release`. Pass `-BuildDir build` for correctness work:
+
+```powershell
+# Timings (default tree)
+.\benchmark\run-benchmark.ps1 -Save wentbourne -Ticks 5000 -Label phase4
+
+# Correctness, with asserts live
+.\benchmark\run-benchmark.ps1 -Save Hilbergen -Ticks 3000 -Config Debug -BuildDir build -Label shadow
+```
+
+Configure the release tree with:
+
+```powershell
+cmake -S . -B build-release -G "Visual Studio 17 2022" `
+  -DCMAKE_TOOLCHAIN_FILE=C:/git/vcpkg/scripts/buildsystems/vcpkg.cmake `
+  -DVCPKG_TARGET_TRIPLET=x64-windows-static -DOPTION_USE_ASSERTS=OFF
+```
+
+Report filenames include the tree name, because timings from the two are not comparable
+and silently overwriting a baseline is worse than a verbose filename. Fingerprints *are*
+comparable across trees, since asserts do not change game logic, so `-CompareTo` works
+between them. The runner also warns if it produces timings from an assert-enabled build.
+
+Note that a new tree starts without a graphics set: copy `baseset/opengfx-*.tar` across
+from an existing tree, since CMake only installs the files that ship with the source.
+
+A Debug build is roughly an order of magnitude slower, and the ratios between subsystems
+shift enough to point at the wrong hot spot.
 
 ## Parts and consists
 
@@ -95,19 +130,24 @@ they appear in `load.vehicle_parts` and in no consist count.
 
 Pathfinding and order processing happen once *per consist*. Divide that cost by a long
 train's parts and trains look cheap; divide it by a road vehicle's single part and road
-vehicles look catastrophic. Same work, different denominator. Wentbourne, phase 0:
+vehicles look catastrophic. Same work, different denominator. Wentbourne, asserts off:
 
 | Group | Parts | Consists | Parts/consist | ns/part/tick | ns/consist/tick |
 | --- | --- | --- | --- | --- | --- |
-| Trains | 75,182 | 4,833 | 15.6 | 316.5 | 4923.6 |
-| Road vehicles | 5,499 | 5,499 | 1.00 | 3097.9 | 3097.9 |
-| Ships | 2,818 | 2,818 | 1.00 | 585.4 | 585.4 |
-| Aircraft | 1,529 | 749 | 2.04 | 345.1 | 704.5 |
+| Trains | 75,182 | 4,833 | 15.6 | 261.1 | 4061.2 |
+| Road vehicles | 5,499 | 5,499 | 1.00 | 1985.5 | 1985.5 |
+| Ships | 2,818 | 2,818 | 1.00 | 503.0 | 503.0 |
+| Aircraft | 1,529 | 749 | 2.04 | 306.1 | 624.9 |
 
-Per part, road vehicles look ten times worse than trains. Per consist the ranking
-reverses and trains are 1.6x the more expensive. The ratios are all explicable: ships are
-single-part by definition, this save has no articulated road vehicles, and aircraft sit
-at 2.04 because each plane owns a separate shadow part with helicopters adding a rotor.
+Per part, road vehicles look about eight times worse than trains. Per consist the
+ranking reverses and trains are 2.05x the more expensive. The ratios are all explicable:
+ships are single-part by definition, this save has no articulated road vehicles, and
+aircraft sit at 2.04 because each plane owns a separate shadow part with helicopters
+adding a rotor.
+
+These are the asserts-off figures. The assert-enabled tree inflated road vehicles by 36%
+against trains by 17.5%, which made the per-consist gap look like 1.6x rather than 2.05x
+— a good illustration of why timings belong in `build-release`.
 
 So compare like with like. Prefer **per part** when judging a change to data layout,
 since that is what scales with the number of objects walked. Prefer **per consist** when

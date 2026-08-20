@@ -36,6 +36,15 @@
     Build configuration to run: Debug or RelWithDebInfo. Defaults to RelWithDebInfo,
     because timings from a build with asserts enabled are not worth recording.
 
+.PARAMETER BuildDir
+    Build tree to run from, relative to the repository root. Defaults to 'build-release',
+    which is configured with OPTION_USE_ASSERTS=OFF and is the tree to take timings from.
+    Use 'build' for the assert-enabled tree, which is the one to use for correctness work
+    such as shadow-mode assertions.
+
+    The two trees produce separate report files, because their timings are not comparable.
+    Fingerprints are comparable across both, since asserts do not change game logic.
+
 .PARAMETER CheckDeterminism
     Run twice and compare the game state fingerprints. Note that savegames are NOT
     compared byte for byte, because they are not a pure function of the game state;
@@ -58,6 +67,7 @@ param(
     [int]$Ticks = 20000,
     [string]$Label = 'run',
     [ValidateSet('Debug', 'RelWithDebInfo', 'Release')][string]$Config = 'RelWithDebInfo',
+    [string]$BuildDir = 'build-release',
     [switch]$CheckDeterminism,
     [string]$CompareTo
 )
@@ -65,8 +75,8 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$buildDir = Join-Path $repoRoot 'build'
-$exe = Join-Path $buildDir "$Config\openttd.exe"
+$buildPath = Join-Path $repoRoot $BuildDir
+$exe = Join-Path $buildPath "$Config\openttd.exe"
 $benchDir = $PSScriptRoot
 $outDir = Join-Path $benchDir 'out'
 
@@ -75,23 +85,23 @@ $savePath = Join-Path $benchDir "saves\$Save"
 $saveName = [System.IO.Path]::GetFileNameWithoutExtension($Save)
 
 if (-not (Test-Path $exe)) {
-    throw "No $Config binary at $exe. Build it first: cmake --build build --config $Config --target openttd"
+    throw "No $Config binary at $exe. Build it first: cmake --build $BuildDir --config $Config --target openttd"
 }
 if (-not (Test-Path $savePath)) {
     throw "Savegame not found: $savePath"
 }
-if (-not (Test-Path (Join-Path $buildDir 'baseset'))) {
-    throw "No baseset in $buildDir. The game needs a graphics set to start."
+if (-not (Test-Path (Join-Path $buildPath 'baseset'))) {
+    throw "No baseset in $buildPath. The game needs a graphics set to start."
 }
 
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 
 # The config must live inside the build directory, or its own directory becomes a
 # data search directory and the baseset is no longer found.
-$activeConfig = Join-Path $buildDir 'bench.cfg'
+$activeConfig = Join-Path $buildPath 'bench.cfg'
 Copy-Item -Path (Join-Path $benchDir 'bench.cfg') -Destination $activeConfig -Force
 
-$exitSave = Join-Path $buildDir 'save\autosave\exit.sav'
+$exitSave = Join-Path $buildPath 'save\autosave\exit.sav'
 
 function Invoke-Run {
     param([string]$StatsPath, [string]$SaveCopyPath)
@@ -109,7 +119,7 @@ function Invoke-Run {
 
     Write-Host "  running $Ticks ticks..." -NoNewline
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    $proc = Start-Process -FilePath $exe -ArgumentList $arguments -WorkingDirectory $buildDir -Wait -PassThru -NoNewWindow
+    $proc = Start-Process -FilePath $exe -ArgumentList $arguments -WorkingDirectory $buildPath -Wait -PassThru -NoNewWindow
     $sw.Stop()
     Write-Host " done in $([math]::Round($sw.Elapsed.TotalSeconds, 1))s (exit $($proc.ExitCode))"
 
@@ -128,10 +138,13 @@ function Invoke-Run {
     }
 }
 
-$stem = "$Label-$saveName-$Config"
+# The build tree is part of the name: two trees with different assert settings produce
+# timings that must not be confused, and silently overwriting a baseline is worse than a
+# verbose filename.
+$stem = "$Label-$saveName-$Config-$BuildDir"
 $statsPath = Join-Path $outDir "$stem.tsv"
 
-Write-Host "Benchmark: $saveName / $Config / $Ticks ticks"
+Write-Host "Benchmark: $saveName / $Config / $BuildDir / $Ticks ticks"
 Invoke-Run -StatsPath $statsPath -SaveCopyPath (Join-Path $outDir "$stem-a.sav")
 
 # Read the state.* keys of a report into a hashtable.
@@ -175,6 +188,14 @@ function Compare-Fingerprint {
 }
 
 $fpA = Get-Fingerprint $statsPath
+
+# Timings from an assert-enabled build are not worth recording, so say so rather than
+# letting the number look authoritative.
+$asserts = (Select-String -Path $statsPath -Pattern '^run\.asserts_enabled\t(\d)').Matches.Groups[1].Value
+if ($asserts -eq '1' -and $Config -ne 'Debug') {
+    Write-Host "  NOTE: this build has asserts enabled, so treat the timings as indicative only." -ForegroundColor Yellow
+    Write-Host "        For timings use -BuildDir build-release, which is configured with OPTION_USE_ASSERTS=OFF."
+}
 
 # Recorded for reference only. Do NOT gate on this: two identical runs of unmodified
 # master produce savegames that differ, so the bytes are not a behaviour signal.
