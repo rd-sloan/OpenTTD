@@ -88,6 +88,8 @@ add_files(
     base_media_music.h
     base_media_sounds.h
     base_station_base.h
+    benchmark_stats.cpp
+    benchmark_stats.h
     bitmap_type.h
     bmp.cpp
     bmp.h
@@ -477,6 +479,8 @@ add_files(
     station_layout_type.h
     station_map.h
     station_type.h
+    state_fingerprint.cpp
+    state_fingerprint.h
     statusbar_gui.cpp
     statusbar_gui.h
     stdafx.h

@@ -23,7 +23,13 @@ endif()
 # at the same time.
 if(EDITBIN_EXECUTABLE)
     execute_process(COMMAND ${CMAKE_COMMAND} -E copy ${OPENTTD_EXECUTABLE} regression_${REGRESSION_TEST}.exe)
-    set(OPENTTD_EXECUTABLE "regression_${REGRESSION_TEST}.exe")
+    # Must stay an absolute path. execute_process() does not resolve a bare relative
+    # executable name against the working directory, so using the plain filename here
+    # makes every later launch fail with "no such file or directory". As the script
+    # does not check RESULT_VARIABLE, that surfaces much later and misleadingly as
+    # "Regression did not output anything; did the compilation fail?".
+    # In script mode (-P) CMAKE_CURRENT_BINARY_DIR is the working directory.
+    set(OPENTTD_EXECUTABLE "${CMAKE_CURRENT_BINARY_DIR}/regression_${REGRESSION_TEST}.exe")
 
     execute_process(COMMAND ${EDITBIN_EXECUTABLE} /nologo /subsystem:console ${OPENTTD_EXECUTABLE})
 endif()

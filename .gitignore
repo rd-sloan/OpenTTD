@@ -6,3 +6,8 @@ docs/gamedocs/*
 docs/source/*
 /out
 /vcpkg_installed
+
+# ECS migration benchmark harness: keep bench.cfg, the runner and the README,
+# but not the savegame fixtures or the generated reports.
+/benchmark/out
+/benchmark/saves

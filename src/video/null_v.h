@@ -16,6 +16,7 @@
 class VideoDriver_Null : public VideoDriver {
 private:
 	uint ticks = 0; ///< Amount of ticks to run.
+	std::string stats_file{}; ///< Path to write a benchmark report to, empty to write none.
 
 public:
 	std::optional<std::string_view> Start(const StringList &param) override;

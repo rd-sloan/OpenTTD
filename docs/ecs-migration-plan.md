@@ -99,6 +99,18 @@ EnTT's packed-array order is the opposite -- it is a function of the entire
 create/destroy history, because swap-and-pop moves the last element into each
 hole.
 
+Two specifics, both pinned down by tests in `src/tests/entt_smoke.cpp` so that an
+EnTT upgrade which changed either one fails loudly rather than silently
+desyncing:
+
+- **Views iterate the packed array in reverse.** A registry populated with ids 0
+  to 7 and nothing removed iterates as `7, 6, 5, 4, 3, 2, 1, 0`. Iteration is
+  not creation order even before history enters the picture.
+- **After a removal there is no canonical order at all.** Destroying the id 2
+  entity from that set leaves the packed array as `0, 1, 7, 3, 4, 5, 6`, which
+  the reversed walk yields as `6, 5, 4, 3, 7, 1, 0` -- neither ascending nor
+  descending.
+
 The failure this produces: the savegame stores the live set, not the allocation
 history.
 Load a save and EnTT's packed order is fresh and sequential; in the run that
@@ -113,8 +125,14 @@ ID order before use.
 Call `registry.sort<T>()` keyed on the stable ID, gated on a dirty flag set by
 create and destroy.
 Structural churn is rare next to the tick rate, so this amortises to nearly
-nothing -- and once sorted, packed order *is* ascending ID order, so the
-contiguity you came for is preserved.
+nothing -- and once sorted the storage is contiguous in ID order, so the
+locality you came for is preserved.
+
+Usefully, `sort` arranges storage so that *iteration* matches the comparator
+rather than the raw packed layout, so a plain `lhs.value < rhs.value` yields
+ascending iteration despite the reversed walk.
+That reproduces `PoolIterator`'s ascending-index order exactly, which is what
+makes an order-preserving migration possible at all.
 
 **Consequence:** owning groups are unavailable for game-state components.
 EnTT forbids sorting a pool once a group owns it, and sorting is exactly what is
@@ -188,22 +206,85 @@ Risk climbs only after the idioms are familiar.
 
 ### Verification harness
 
-The null video driver already accepts a tick count
-(`GetDriverParamInt(parm, "ticks", 1000)`, `src/video/null_v.cpp:33`), which
-gives a headless fixed-work benchmark:
+Built in phase 0 and documented in [benchmark/README.md](../benchmark/README.md).
+The null video driver already accepted a tick count, and now also accepts a
+`stats=<path>` parameter that writes a report of timings, workload counts and
+object sizes when the run finishes:
 
+```powershell
+.\benchmark\run-benchmark.ps1 -Save Hilbergen -Ticks 20000 -Label phase0 -CheckDeterminism
 ```
-build\Debug\openttd.exe -x -Q -snull -mnull -vnull:ticks=50000 -g bench.sav
-```
+
+Use the runner rather than invoking the binary directly. Three headless
+behaviours on Windows are invisible failures rather than error messages, and the
+runner already accounts for them:
+
+- The binary is GUI subsystem, and `CreateConsole` reopens the standard streams
+  onto a freshly allocated console, so redirected stdout and stderr capture
+  nothing even for a failing run. Reports go to a file for this reason.
+- `-c <path>` makes the config file's parent directory a data search directory
+  (`fileio.cpp`), so a config outside the build tree hides `build/baseset` and
+  the game exits 1 with no output.
+- `gui.autosave_on_exit` defaults to false, so without `benchmark/bench.cfg`
+  there is no `exit.sav` and a determinism check silently compares nothing.
 
 Determinism checks available on top of that:
 
-- Run the same save twice and compare the output savegames byte for byte.
 - `-d desync=2` adds vehicle cache validation (`src/cachecheck.cpp`) and command
-  logging; `-d desync=3` adds monthly `dmp_cmds_*.sav` dumps that are convenient
-  byte-comparison fixtures. See [debugging_desyncs.md](./debugging_desyncs.md).
+  logging; `-d desync=3` adds monthly `dmp_cmds_*.sav` dumps. See
+  [debugging_desyncs.md](./debugging_desyncs.md).
 - `ctest --test-dir build -C Debug -R regression` must stay green. It is the
   closest thing in-tree to a state-equivalence test.
+
+### Comparing savegames byte for byte does not work
+
+This plan originally proposed comparing exit saves byte for byte as the
+determinism check. Phase 0 measured that and it does not hold, **on unmodified
+master**, so it cannot be an exit criterion.
+
+Running Hilbergen twice with identical arguments produces exit saves that differ
+in a few hundred bytes. Two observations identify what is going on:
+
+- One 32 byte cluster is `_game_session_stats.savegame_id` (`misc_sl.cpp:105`), a
+  random per-session identifier. Expected, and harmless.
+- The remaining differences are scattered in small 1 to 4 byte runs through the
+  `VEHS` chunk at roughly one per vehicle record, and **the count does not grow
+  with the number of ticks simulated**: 488 differing bytes after 1 tick, 442
+  after 100, 445 after 20000.
+
+Immediate divergence that does not accumulate is not simulation drift. It points
+at bytes in the vehicle records that are not a function of game state, most
+likely fields that are never initialised for some vehicle types and are
+serialised with whatever the allocator happened to leave there.
+
+Ruled out along the way: the link graph never ran (`perf.link_graph.count` is 0),
+`_interactive_random` is not saved (only `_random.state`), `StationCompare` orders
+by index rather than pointer, and realtime autosaves are disabled in `bench.cfg`.
+
+**A game state fingerprint is used instead**, implemented in
+`src/state_fingerprint.cpp`. It hashes the values that define behaviour -- vehicle
+position, speed, order state, cargo and chain structure, company balances, station
+cargo, town populations, industry production, and the shared randomiser -- and
+records the result in the benchmark report.
+
+Two design points carry the weight. Everything is visited in ascending pool index
+order, so the hash is a function of the live set rather than of allocation
+history. Object references are hashed as pool indices, never as pointers, so the
+result is independent of the allocator and of address space layout -- which is
+what makes it survive the very refactors it is meant to check.
+
+The hash is split per subsystem rather than combined into one number, so a
+mismatch says *where* behaviour changed instead of merely that it did.
+
+Verified both ways. Two identical 3000 tick runs produce identical fingerprints
+while their savegames differ by roughly 100 KB, which also confirms the simulation
+itself is deterministic and the savegame noise really is noise. Running 3001 ticks
+instead changes the vehicle, company, station and global hashes, and correctly
+leaves towns and industries untouched because those only update on periodic ticks.
+
+Note that this says nothing about save *format* compatibility, which remains a
+hard requirement and is verified differently: a save written by a migrated build
+must still load in unmodified OpenTTD.
 
 ### Standard exit criteria
 
@@ -211,9 +292,10 @@ Unless a phase says otherwise, all of these must hold before moving on:
 
 1. Builds clean on win64.
 2. Game boots, loads every benchmark save, and is playable.
-3. Save round-trip is byte-identical.
-4. Regression suite green.
-5. Benchmark timings recorded against the phase 0 baseline.
+3. Game state fingerprint unchanged from the phase 0 baseline.
+4. A save written by the migrated build loads in unmodified OpenTTD.
+5. Regression suite green.
+6. Benchmark timings recorded against the phase 0 baseline.
 
 ## 5. Phases
 
@@ -221,23 +303,111 @@ Risk labels: `CLEAR` = no game-state exposure, cannot desync.
 `CAUTION` = touches game state, shadow-verified.
 `DANGER` = alters visit order, or deep coupling.
 
-### Phase 0 -- Toolchain and baseline (CLEAR)
+### Phase 0 -- Toolchain and baseline (CLEAR) -- done
 
-No EnTT usage yet, only the ability to use it and the numbers to judge later
-phases by.
+No EnTT usage in the game yet, only the ability to use it and the numbers to
+judge later phases by.
 
-EnTT 3.16.0 is already a port in the local vcpkg tree, so add it to
-`vcpkg.json`, then `find_package(EnTT CONFIG REQUIRED)` and link it into
-`openttd_lib`.
-Prove the toolchain with a Catch2 test in `src/tests/` that creates a registry,
-emplaces a component, and iterates a view.
-Remember to add the new test file to `src/tests/CMakeLists.txt`.
+Done:
 
-Then build the harness described above, and record `sizeof(Vehicle)` and
-`sizeof(Train)` -- a deliberately wrong `static_assert` will report the real
-numbers. They are the headline before/after figure.
+- EnTT 3.16.0 added to `vcpkg.json`, wired up with `find_package(EnTT CONFIG
+  REQUIRED)` and linked into `openttd_lib`.
+- `src/tests/entt_smoke.cpp` proves the toolchain works and pins down the two
+  ordering properties from section 3.1. Writing it immediately caught a wrong
+  assumption: views iterate in reverse, not creation order.
+- Whole-run totals added to `PerformanceData` and exposed via
+  `GetPerformanceTotal`, because the existing rolling 512 sample buffer covers
+  only the last fraction of a long run.
+- `src/benchmark_stats.cpp` writes a report of timings, workload counts and
+  object sizes, driven by a new `stats=<path>` parameter on the null video driver.
+- `benchmark/run-benchmark.ps1` and `benchmark/bench.cfg` wrap the run, including
+  the several ways headless OpenTTD fails silently on Windows.
+- `src/state_fingerprint.cpp` provides the per-subsystem game state hash that
+  replaces byte-identical savegame comparison, wired into the report and into the
+  runner's `-CheckDeterminism` and `-CompareTo` gates.
+
+Baseline, Hilbergen, RelWithDebInfo, 20000 ticks. Note that asserts are still
+enabled in this build tree (`OPTION_USE_ASSERTS=ON` applies to every
+configuration), so these are not clean release numbers; a separate build tree
+with asserts off would be better:
+
+| Figure | Value |
+| --- | --- |
+| Wall clock | 10.85 s (1843 ticks/s) |
+| `GameLoop` total | 8892 ms |
+| `GameLoopTrains` | 6966 ms, 78.4% of the game loop |
+| `GameLoopLandscape` | 1051 ms, 11.8% |
+| `GameLoopEconomy` | 204 ms, 2.3% |
+| Train cost per part per tick | 127.6 ns |
+| Train cost per consist per tick | 1507.9 ns |
+| `sizeof(Vehicle)` / `sizeof(Train)` | 552 / 648 bytes |
+| Vehicle parts / consists | 2818 / 231 |
+
+For comparison the same save in Debug ran at 142 ticks/s, roughly fifteen times
+slower, with trains at 88% of the game loop. Debug is not a benchmark.
+
+Absolute timings vary by up to 15% between invocations depending on what else the
+machine is doing, while the percentage shares stay within about one point. Compare
+shares across sessions, and take the best of several runs for absolute figures.
+
+Baseline, wentbourne, RelWithDebInfo, 5000 ticks. A 1024x1024 map in year 3739
+with 85,259 vehicle parts across 13,899 consists, 2,263 stations and 1,309
+industries:
+
+| Element | Total | Share | ns/part/tick | ns/consist/tick |
+| --- | --- | --- | --- | --- |
+| `GameLoop` | 257,009 ms | | 602.9 | 3698.2 |
+| `GameLoopTrains` | 118,978 ms | 46.3% | 316.5 | 4923.6 |
+| `GameLoopRoadVehicles` | 85,176 ms | 33.1% | 3097.9 | 3097.9 |
+| `GameLoopShips` | 8,249 ms | 3.2% | 585.4 | 585.4 |
+| `GameLoopAircraft` | 2,639 ms | 1.0% | 345.1 | 704.5 |
+| `GameLoopLandscape` | 7,044 ms | 2.7% | | |
+| `GameLoopEconomy` | 6,563 ms | 2.6% | | |
+| **All vehicle ticks** | **215,041 ms** | **83.7%** | **504.4** | |
+
+Vehicle ticks are 84% of the game loop, and the save runs at 19.3 ticks/s against
+the roughly 33.3 needed for real time, so it is genuinely at the limit rather than
+merely large. Whatever fraction of that 215 s is attributable to memory layout is
+what phases 4 and 5 are competing for.
+
+**Read the two normalised columns together, because they disagree.** Per part,
+road vehicles look ten times worse than trains (3098 against 317 ns). Per consist
+the ranking reverses and trains are the more expensive by 1.6x (4924 against
+3098 ns). The parts-per-consist ratios explain it exactly: 15.6 for trains, 1.0
+for road vehicles and ships, 2.0 for aircraft, which carry a separate shadow part.
+A train consist does its pathfinding and order processing once and spreads the cost
+over sixteen parts; a road vehicle bears it alone.
+
+The consequence for this plan is that the two figures answer different questions,
+and phases 4 and 5 care about different ones:
+
+- Phase 4 moves hot fields into packed components, which helps whatever is walked
+  per part. The 85,259 parts and the per-part column are the relevant measure, and
+  trains dominate the part count by an order of magnitude.
+- Phase 5 devirtualises per-consist decision work. The per-consist column is the
+  relevant measure there, and it says road vehicles are worth as much attention as
+  trains despite being a fourteenth of the parts.
+
+Determinism confirmed on this save too: two invocations separated by a rebuild both
+produced `state.hash.combined = 29B52DBB6E7D2558`.
 
 **Exit:** standard criteria, plus baseline timings and struct sizes recorded.
+
+### Phase 0 aside: the regression suite was broken on Windows
+
+Worth recording because a phase gate depended on it. All four regression tests
+failed with "Regression did not output anything; did the compilation fail?".
+
+The cause was unrelated to any migration work. `cmake/scripts/Regression.cmake`
+copies the binary and re-points `OPENTTD_EXECUTABLE` at the bare relative name
+`regression_<test>.exe`, but `execute_process` does not resolve a relative
+executable name against the working directory, so every launch failed with "no
+such file or directory". Because the script does not check `RESULT_VARIABLE`, that
+surfaced later as the misleading message above. It is Windows-specific: elsewhere
+`EDITBIN_EXECUTABLE` is not found, the copy is skipped, and the original absolute
+path is used.
+
+Making the path absolute fixes it, and all four tests now pass in about 22 s.
 
 ### Phase 1 -- Registry, identity mapping, lifecycle (CLEAR)
 
@@ -371,6 +541,15 @@ stock run tick-for-tick under the order-preserving dispatch build.
 ### Phase 7 -- Hollowing out `Vehicle` (CAUTION)
 
 Consolidation rather than new capability.
+
+One target is already measured. `Vehicle` inherits `BaseConsist`, so all 88 bytes
+of it are carried by every part, while its contents -- name, timetable and lateness
+counters, depot unbunching timestamps, service interval, current order indices --
+are only meaningful on the front vehicle. On wentbourne that is 71,360 of 85,259
+parts holding data that means nothing to them: roughly 6.0 MB of the 7.2 MB total,
+and 16% of the 552 byte `Vehicle`. Moving it to a component held only by consists
+is the clearest single win available here, and `sizeof.BaseConsist` in the
+benchmark report tracks it.
 
 Formalise the save facade as an explicit staging struct whose members mirror the
 descriptor names exactly, so the coupling between save format and runtime layout

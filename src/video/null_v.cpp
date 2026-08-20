@@ -8,11 +8,14 @@
 /** @file null_v.cpp The video driver that doesn't blit. */
 
 #include "../stdafx.h"
+#include "../benchmark_stats.h"
 #include "../gfx_func.h"
 #include "../blitter/factory.hpp"
 #include "../saveload/saveload_func.h"
 #include "../window_func.h"
 #include "null_v.h"
+
+#include <chrono>
 
 #include "../safeguards.h"
 
@@ -31,6 +34,11 @@ std::optional<std::string_view> VideoDriver_Null::Start(const StringList &parm)
 	this->UpdateAutoResolution();
 
 	this->ticks = GetDriverParamInt(parm, "ticks", 1000);
+
+	/* Optional 'stats=<path>' parameter writes a benchmark report once the ticks are done. */
+	auto stats = GetDriverParam(parm, "stats");
+	if (stats.has_value()) this->stats_file.assign(*stats);
+
 	_screen.width  = _screen.pitch = _cur_resolution.width;
 	_screen.height = _cur_resolution.height;
 	_screen.dst_ptr = nullptr;
@@ -50,10 +58,21 @@ void VideoDriver_Null::MainLoop()
 {
 	uint i;
 
+	const auto start = std::chrono::steady_clock::now();
+
 	for (i = 0; i < this->ticks; i++) {
 		::GameLoop();
 		::InputLoop();
 		::UpdateWindows();
+	}
+
+	const auto elapsed = std::chrono::steady_clock::now() - start;
+
+	/* Report before the exit save, so the timing does not include writing the savegame.
+	 * The game state is still live at this point, which is what the workload counts need. */
+	if (!this->stats_file.empty()) {
+		WriteBenchmarkStats(this->stats_file, this->ticks,
+				std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count());
 	}
 
 	/* If requested, make a save just before exit. The normal exit-flow is

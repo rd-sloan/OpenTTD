@@ -126,6 +126,9 @@ find_package(LibLZMA)
 find_package(LZO)
 find_package(PNG)
 
+# EnTT is header-only and is required: the ECS migration work depends on it.
+find_package(EnTT CONFIG REQUIRED)
+
 if(WIN32 OR EMSCRIPTEN)
     # Windows uses WinHttp for HTTP requests.
     # Emscripten uses Javascript for HTTP requests.
@@ -279,6 +282,7 @@ target_link_libraries(openttd_lib
     openttd::settings
     openttd::script_api
     Threads::Threads
+    EnTT::EnTT
 )
 
 target_link_libraries(openttd

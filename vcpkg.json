@@ -18,6 +18,9 @@
       "default-features": false
     },
     {
+      "name": "entt"
+    },
+    {
       "name": "fontconfig",
       "platform": "linux"
     },

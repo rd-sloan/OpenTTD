@@ -74,6 +74,15 @@ namespace {
 		TimingMeasurement acc_timestamp{};
 
 		/**
+		 * Total measured time since startup, in #TIMESTAMP_PRECISION units.
+		 * Unlike #durations this is not bounded by #NUM_FRAMERATE_POINTS, which makes it
+		 * usable for benchmarking a fixed amount of work. @see GetPerformanceTotal
+		 */
+		TimingMeasurement total_duration{};
+		/** Number of complete measurements since startup. @see GetPerformanceTotal */
+		uint64_t total_count = 0;
+
+		/**
 		 * Initialize a data element with an expected collection rate
 		 * @param expected_rate
 		 * Expected number of cycles per second of the performance element. Use 1 if unknown or not relevant.
@@ -94,6 +103,9 @@ namespace {
 			this->next_index += 1;
 			if (this->next_index >= NUM_FRAMERATE_POINTS) this->next_index = 0;
 			this->num_valid = std::min(NUM_FRAMERATE_POINTS, this->num_valid + 1);
+
+			this->total_duration += end_time - start_time;
+			this->total_count++;
 		}
 
 		/**
@@ -108,6 +120,9 @@ namespace {
 			this->next_index += 1;
 			if (this->next_index >= NUM_FRAMERATE_POINTS) this->next_index = 0;
 			this->num_valid = std::min(NUM_FRAMERATE_POINTS, this->num_valid + 1);
+
+			this->total_duration += this->acc_duration;
+			this->total_count++;
 
 			this->acc_duration = 0;
 			this->acc_timestamp = start_time;
@@ -1057,6 +1072,26 @@ void ShowFrametimeGraphWindow(PerformanceElement elem)
 {
 	if (elem >= PerformanceElement::End) return; // maybe warn?
 	AllocateWindowDescFront<FrametimeGraphWindow>(_frametime_graph_window_desc, elem);
+}
+
+/**
+ * Get the totals measured for a performance element since startup.
+ *
+ * The framerate window and #ConPrintFramerate both report averages over a rolling
+ * window of at most #NUM_FRAMERATE_POINTS samples, which is the wrong tool for
+ * benchmarking a fixed amount of work. These totals cover the whole run instead.
+ *
+ * For elements measured with #PerformanceAccumulator the count is the number of
+ * accumulation cycles, so cycles during which nothing was measured are counted
+ * with a duration of zero.
+ *
+ * @param elem The element to query.
+ * @return Total measured time in microseconds, and the number of measurements.
+ */
+PerformanceTotal GetPerformanceTotal(PerformanceElement elem)
+{
+	const auto &pf = _pf_data[elem];
+	return { pf.total_duration, pf.total_count };
 }
 
 /** Print performance statistics to game console */

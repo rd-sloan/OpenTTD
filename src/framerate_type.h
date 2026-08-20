@@ -118,6 +118,14 @@ public:
 	static void Reset(PerformanceElement elem);
 };
 
+/** Whole-run totals for one performance element, unaffected by the rolling sample window. */
+struct PerformanceTotal {
+	TimingMeasurement total_us; ///< Total measured time, in microseconds.
+	uint64_t count; ///< Number of measurements that make up #total_us.
+};
+
+PerformanceTotal GetPerformanceTotal(PerformanceElement elem);
+
 void ShowFramerateWindow();
 void ProcessPendingPerformanceMeasurements();
 
