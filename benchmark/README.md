@@ -236,7 +236,7 @@ it divides out whatever the absolute speed happened to be.
 
 ## Things that will waste your afternoon
 
-Four non-obvious behaviours, all of which the runner already handles. They are recorded
+Five non-obvious behaviours, all of which the runner already handles. They are recorded
 here because they are invisible failures rather than error messages.
 
 **OpenTTD cannot print to your shell on Windows.** The binary is built for the GUI
@@ -253,6 +253,12 @@ the game exits 1 silently. The runner copies `bench.cfg` into `build/` before ru
 **`gui.autosave_on_exit` defaults to false.** Without it no `exit.sav` is produced, and a
 determinism check would compare files that do not exist. It is set in `bench.cfg`, along
 with `gui.threaded_saves = false` so the save is complete before the process exits.
+
+**PowerShell variables are case-insensitive.** `$buildDir = Join-Path $repoRoot $BuildDir`
+silently overwrites the `$BuildDir` *parameter* with an absolute path, because they are the
+same variable. That produced a report filename containing a drive letter and a colon, so
+the run "succeeded" and wrote nothing. The runner uses `$buildPath` for the resolved path
+to keep them distinct; do the same for any parameter you add.
 
 **An unknown key in `bench.cfg` is ignored silently.** Verify any setting you add against
 `src/table/settings/*.ini`, including its section, which is the part before the dot in the
