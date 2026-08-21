@@ -124,9 +124,19 @@ game states separate immediately.
 ID order before use.
 Call `registry.sort<T>()` keyed on the stable ID, gated on a dirty flag set by
 create and destroy.
-Structural churn is rare next to the tick rate, so this amortises to nearly
-nothing -- and once sorted the storage is contiguous in ID order, so the
-locality you came for is preserved.
+Once sorted the storage is contiguous in ID order, so the locality you came for is
+preserved.
+
+> **Unverified assumption, flagged.** This section originally continued "structural
+> churn is rare next to the tick rate, so this amortises to nearly nothing". That
+> has never been measured, and it is load-bearing: it is the entire reason to expect
+> a sorted registry to be affordable. A sort is O(n log n) on the live set, around
+> 1.4 million comparisons on wentbourne's 85,000 parts, so if the dirty flag fires
+> every few ticks the sort could swamp the locality win it exists to enable.
+> Phase 6 measures the sort frequency directly before either dispatch variant is
+> built. Given how the other confident-sounding claims in this document have fared
+> against measurement, treat the amortisation as an open question rather than a
+> premise.
 
 Usefully, `sort` arranges storage so that *iteration* matches the comparator
 rather than the raw packed layout, so a plain `lhs.value < rhs.value` yields
@@ -320,9 +330,18 @@ Unless a phase says otherwise, all of these must hold before moving on:
 1. Builds clean on win64.
 2. Game boots, loads every benchmark save, and is playable.
 3. Game state fingerprint unchanged from the phase 0 baseline.
-4. A save written by the migrated build loads in unmodified OpenTTD.
-5. Regression suite green.
-6. Benchmark timings recorded against the phase 0 baseline.
+4. Save-resume equivalence: N ticks then save, reload and run M more, gives the
+   same fingerprint as N+M ticks run straight through.
+5. A save written by the migrated build loads in unmodified OpenTTD.
+6. Regression suite green.
+7. Benchmark timings recorded against the phase 0 baseline.
+
+Criterion 4 is newer than the others and is not yet implemented in the harness --
+it was identified while planning phase 6, which is the first phase able to violate
+it. It is listed here rather than there because it applies to anything that touches
+visit order, and its absence has been a gap in the verification story all along:
+criterion 3 runs the same save twice from a fresh load, so it cannot detect an
+order that depends on session history. See phase 6 for the mechanism.
 
 ## 5. Phases
 
@@ -348,11 +367,39 @@ fixes that as a side effect. Current sequence:
 | 1 -- Registry, identity, lifecycle | CLEAR | done |
 | 2 -- First real components | CLEAR | done, re-scoped |
 | 3 -- Shadow mode | CAUTION | done, re-scoped |
-| 4 -- Motion components | CAUTION | `vcache` fully migrated; motion fields blocked on 5 |
-| 5 -- Save staging | CAUTION | next |
-| 6 -- Devirtualising the tick dispatch | DANGER | |
+| 4 -- Motion components | CAUTION | `vcache` fully migrated; 9 motion fields blocked on 5 |
+| 5 -- Save staging | CAUTION | **next** |
+| 6 -- Devirtualising the tick dispatch | DANGER | both dispatch variants, A/B'd |
 | 7 -- Economy and cargo | DANGER | |
 | 8 -- Hollowing out `Vehicle` | CAUTION | |
+
+#### The agreed working sequence
+
+Phase 5, then finish phase 4, then phase 6 running **both** dispatch variants for
+comparison. Two things are worth recording about that order.
+
+**It is forced, not chosen.** Every one of the nine motion fields is serialised --
+checked against the descriptor lists rather than assumed:
+
+| Field | Descriptor sites in `src/saveload/` |
+| --- | --- |
+| `x_pos`, `y_pos`, `z_pos` | 6 each |
+| `progress` | 3 |
+| `direction`, `tick_counter` | 2 each |
+| `cur_speed`, `subspeed`, `motion_counter` | 1 each |
+
+So commit 3 is impossible for all nine without staging, and until commit 3 lands
+each migrated field pays dual-write cost. There is no ordering that gets phase 4
+finished before phase 5.
+
+**Phase 5 is also the first honest test of whether commit 3 gives anything back.**
+Finishing `vcache` showed that deleting a member is not automatically a win: its
+dual writes were cold and its bytes vanished into padding. The motion fields differ
+on the first count -- `subspeed` and `motion_counter` are written *per tick* -- so
+the mechanism that was absent for `vcache` is genuinely present here. That makes
+the two-field commit 3 immediately after phase 5 a cheap, well-isolated measurement
+before committing to the other seven field groups. Take it before doing the bulk
+work, not after.
 
 `vcache` is now fully migrated: it is not serialised, so its commits 2 and 3 needed
 nothing from phase 5 and are done. It is the first field group to complete all three
@@ -1011,9 +1058,30 @@ flipping it. Finishing `vcache` turned this from a caution into a demonstrated b
 -- see the next section.
 
 Commit 3 is blocked on the staging mechanism, now phase 5, because `subspeed` and
-`motion_counter` are serialised. The same applies to every field this phase still
-has to move -- `progress`, `cur_speed`, `direction`, and the three position fields
-are all serialised -- so **phase 4 cannot be completed before phase 5**.
+`motion_counter` are serialised. So is every other field this phase has to move --
+all nine, verified against the descriptor lists -- so **phase 4 cannot be completed
+before phase 5**.
+
+Sizing the remainder, counted rather than estimated. Totals are textual matches on
+`->field` / `.field` / `this->field`, and the write column is a rough upper bound
+that over-counts (`direction` in particular collides with unrelated `Direction
+direction` parameters), so read these as magnitudes:
+
+| Field group | Sites | Writes (upper bound) | Status |
+| --- | --- | --- | --- |
+| `subspeed`, `motion_counter` | -- | -- | commit 1 done |
+| `x_pos`, `y_pos`, `z_pos` | 162 / 165 / 129 | ~38 / 42 / 44 | blocked on 5 |
+| `cur_speed` | 158 | ~68 | blocked on 5 |
+| `direction` | 142 | ~79 | blocked on 5 |
+| `progress` | 56 | ~41 | blocked on 5 |
+| `tick_counter` | 35 | ~12 | blocked on 5 |
+
+Roughly 850 sites and a few hundred writes still to move. Two implications for how
+to sequence it. Do the field groups **one at a time, measuring each**, because a
+single 850-site commit makes an unexplained regression unattributable -- phase 2's
+74% was only diagnosable because it was isolated to `bounds`. And do the three
+position fields as **one component**, not three: they are read and written together
+throughout the movement code, so splitting them triples the lookups for no benefit.
 
 `sizeof(Vehicle)` went from 544 to 560 bytes, as it must while both copies exist.
 
@@ -1222,31 +1290,36 @@ exactly the access pattern the packed walk exists to remove. Converting the loop
 first would measure packed reads plus scattered writes plus dual-write overhead,
 and produce a number that means very little.
 
-#### A cheap way to de-risk this ordering first -- now cheaper
+#### The narrow de-risk experiment, and why it is being skipped
 
-`vcache` is **not** serialised, so its commit 3 needed no staging and **is now
-done**: the member is gone and the component holds the only copy. It is also
-read-only in the tick loop, so a view over `VehicleCacheComponent` can be walked
-with no write-back at all.
+`vcache` is **not** serialised, so its commit 3 needed no staging and is now done:
+the member is gone and the component holds the only copy. It is also read-only in
+the tick loop, so a view over `VehicleCacheComponent` could be walked with no
+write-back at all -- a narrow but clean early measurement of whether packed
+iteration pays off.
 
-That leaves a partial version of phase 6 available before this phase, and the
-groundwork for it is already paid for: a clean, if narrow, measurement of whether
-packed iteration pays off, on the one field group that can be measured without any
-write-back contamination.
+That experiment was previously the recommended next step, on the reasoning that the
+ordering argument for staging-before-loop-conversion is an *inference* and this
+document's inferences have a poor record next to its measurements.
 
-It is now the recommended next step ahead of staging, for two reasons. The ordering
-argument above is an *inference* -- that a view-iterating loop must write back to
-authoritative members and so loses its locality benefit -- and this document's
-record is that its inferences fail at a decent rate while its measurements hold.
-Finishing `vcache` just added another entry to that ledger. Second, staging is the
-larger and more invasive piece of work, and committing to it on the strength of an
-untested argument is exactly the trade this experiment avoids.
+**Decision: skip it and proceed with staging.** Two reasons, and they are better
+than the argument for doing it.
 
-One caveat on what the experiment can show: `vcache` reads are two fields out of a
-6-byte struct, so the packed walk has little data to be dense *about*. A null
-result would be weak evidence against phase 6, while a positive result would be
-strong evidence for it. Worth knowing which way the asymmetry runs before reading
-the number.
+First, the ordering argument stopped being merely inferred. All nine motion fields
+are now confirmed serialised against the descriptor lists, so commit 3 is blocked
+for every one of them regardless of what a locality experiment shows. Staging is on
+the critical path either way -- a null result would not have saved the work.
+
+Second, `vcache` is a weak probe. Its reads are two fields out of a 6-byte struct,
+so a packed walk has almost no data to be dense *about*. The asymmetry runs badly:
+a null result would be weak evidence against phase 6, while only a positive result
+would have told us much. Spending the time on a test that can mostly only fail to
+inform is the wrong trade when phase 6 will measure both dispatch variants directly
+and definitively.
+
+The de-risking effort is better spent on the sort-frequency measurement described
+under phase 6, which is cheaper still and answers a question that actually gates a
+design decision.
 
 **Exit:** standard criteria, plus a save written by the staged build loads in
 unmodified OpenTTD, `subspeed` and `motion_counter` deleted from `Vehicle` with
@@ -1274,25 +1347,98 @@ Replacing `virtual bool Tick()` plus `switch (v->type)` with typed passes is the
 largest structural win available -- and it forces a decision that should be made
 deliberately, because the two options differ in kind, not degree.
 
-- **Order-preserving.** Keep one pass in ascending `VehicleID`, replacing virtual
-  dispatch with a type tag and a switch.
-  Smaller win; continuation from existing saves stays bit-identical.
-- **Typed passes.** Four separate views, one per vehicle type.
-  Much better locality and branch behaviour -- but it changes the interleaving of
-  `Random()` draws, so a save made by stock OpenTTD will no longer continue
-  bit-identically.
-  The *format* still loads perfectly; the *trajectory* diverges.
+- **Variant A, order-preserving.** One pass in ascending `VehicleID`, replacing
+  virtual dispatch with a type tag and a switch. Smaller win; continuation from
+  existing saves stays equivalent.
+- **Variant B, typed passes.** Four separate views, one per vehicle type. Much
+  better locality and branch behaviour -- but it changes the interleaving of
+  `Random()` draws, so a save made by stock OpenTTD no longer continues on the same
+  trajectory. The *format* still loads perfectly; the *trajectory* diverges.
 
-For a learning fork the typed version is the more instructive build, and the
-divergence is acceptable as long as it is a decision rather than a discovery.
-Put it behind a compile-time flag so the two can be A/B'd against the same save.
-That comparison is itself one of the more interesting measurements in the
-project.
+**Both will be built and A/B'd against the same save.** That is the plan, and the
+comparison is the most interesting single measurement left in the project, because
+the gap between the two variants is a price tag on the determinism constraint
+itself -- the thing section 3.1 says the codebase cannot give up. Very few projects
+get to measure what their hardest invariant costs them.
 
-**Exit:** standard criteria, *except* that bit-identical continuation is waived
-for the typed build.
-Save format must still be byte-identical, both dispatch modes must build and
-play, and A/B timings recorded.
+#### Variant B is not merely "different from master" -- it is not self-consistent
+
+This needs stating plainly, because the earlier draft of this section understated it
+and the distinction changes what variant B is allowed to be used for.
+
+An unsorted EnTT view walks the packed array, and **packed order is a function of
+history, not of the live set.** That is pinned by a test rather than assumed:
+`src/tests/entt_smoke.cpp`, "Default storage order is history dependent", shows the
+same seven live entities coming out in an order that is neither ascending nor the
+descending order an untouched registry would give, purely because one entity was
+removed and the last element was swapped into the hole.
+
+The consequence is not just divergence from stock OpenTTD. It is divergence from
+*itself*:
+
+- Play to tick N and keep going: packed order reflects the whole create/destroy
+  history of the session.
+- Play to tick N, save, quit, reload, keep going: the registry is rebuilt from the
+  pool in ascending index order, so packed order is fresh.
+
+Same savegame, same live vehicles, two different visit orders, two different
+futures. That breaks save-resume equivalence -- the second of the two determinism
+requirements in section 3.1 -- and it would desync a multiplayer join instantly,
+because a joining client builds its registry fresh from the transferred savegame
+while the server carries its accumulated order.
+
+**The existing determinism check will not catch this.** The harness runs the same
+save twice and compares fingerprints; both runs start from the same fresh load, so
+both get the same order and the check passes. Variant B would look clean.
+
+So phase 6 needs one more verification tool, and building it is part of the phase's
+cost rather than an optional extra: **a save-resume equivalence check.** Run N ticks
+then save, reload and run M more; separately run N+M ticks straight through;
+compare final fingerprints. Under variant A they must match. Under variant B they
+will not, and that failing check is the phase's evidence rather than a bug to chase.
+Worth adding to `run-benchmark.ps1` as a `-CheckResume` switch alongside
+`-CheckDeterminism`, because it is a test the project has been missing all along --
+it would apply to any future phase that touches visit order.
+
+Given that, variant B is scoped as a **measurement branch, not a foundation.**
+Nothing gets built on top of it, and phase 7 continues to target variant A. It is
+playable single-player -- a player cannot observe that resuming produced a different
+future -- which satisfies the ground rule, but it is not a base for further work.
+
+#### Variant A has its own risk, and it is worth pricing first
+
+Variant A gets locality only if the storage is actually sorted; iterating the pool
+and looking up components per vehicle is what the code does *now*, and phase 4
+measured that at no locality benefit. So variant A means `SortVehicleRegistry()`
+running whenever the registry is dirty.
+
+That sort is O(n log n) on the live set -- on wentbourne, ~85,000 parts, so around
+1.4 million comparisons per sort. It is correct and deterministic, so this is purely
+a cost question, and the cost depends entirely on **how often the dirty flag
+fires**. If vehicle creation and destruction are rare, the sort amortises to
+nothing. If they happen every few ticks in a busy game, the sort could swamp the
+locality win outright and variant A becomes pointless.
+
+That is cheap to find out and should be measured before either variant is built:
+instrument `SortVehicleRegistry()` with a call count and accumulated time, and emit
+them as `ecs.sorts` and `ecs.sort_ms`. A single wentbourne run then says whether
+variant A is viable at all. **Do this first** -- it is an hour's work that could
+change the whole shape of the phase, and this document's record is that the cheap
+measurement usually beats the confident argument.
+
+If the sort does turn out to dominate, the honest options are to accept
+pool-order iteration with no locality win (variant A becomes just devirtualisation,
+which is still worth something), or to note that canonical order and packed
+locality are fundamentally in tension here and let variant B's number speak to what
+that tension costs. Both are legitimate results; neither is a failure of the phase.
+
+**Exit:** standard criteria for variant A, including the new save-resume check.
+For variant B: save format byte-identical, both variants build and play, the
+save-resume check recorded as failing *by design* with the mechanism explained, a
+fresh fingerprint baseline captured and shown stable across repeat runs, and A/B
+timings on both fixtures with at least five samples each per the revised noise
+rules. The headline deliverable is the A-versus-B gap and an explanation of where it
+comes from.
 
 ### Phase 7 -- Economy and cargo (DANGER)
 
