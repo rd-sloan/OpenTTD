@@ -1932,7 +1932,7 @@ template <typename T>
 static void PrepareToEnterBridge(T *gv)
 {
 	if (gv->gv_flags.Test(GroundVehicleFlag::GoingUp)) {
-		gv->z_pos++;
+		gv->GetMutablePos().z_pos++;
 		gv->gv_flags.Reset(GroundVehicleFlag::GoingUp);
 	} else {
 		gv->gv_flags.Reset(GroundVehicleFlag::GoingDown);
@@ -1959,7 +1959,7 @@ extern const DiagDirectionIndexArray<uint8_t> _tunnel_visibility_frame{12, 8, 8,
 /** @copydoc VehicleEnterTileProc */
 static VehicleEnterTileStates VehicleEnterTile_TunnelBridge(Vehicle *v, TileIndex tile, int x, int y)
 {
-	int z = GetSlopePixelZ(x, y, true) - v->z_pos;
+	int z = GetSlopePixelZ(x, y, true) - v->GetPos().z_pos;
 
 	if (abs(z) > 2) return VehicleEnterTileState::CannotEnter;
 	/* Direction into the wormhole */
@@ -2031,7 +2031,7 @@ static VehicleEnterTileStates VehicleEnterTile_TunnelBridge(Vehicle *v, TileInde
 
 			if (v->type == VehicleType::Road) spd *= 2;
 			Vehicle *first = v->First();
-			first->cur_speed = std::min(first->cur_speed, spd);
+			first->GetMutableMotion().cur_speed = std::min(first->GetMotion().cur_speed, spd);
 		}
 
 		if (vdir == dir) {

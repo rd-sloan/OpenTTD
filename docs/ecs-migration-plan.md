@@ -372,7 +372,7 @@ fixes that as a side effect. Current sequence:
 | 1 -- Registry, identity, lifecycle | CLEAR | done |
 | 2 -- First real components | CLEAR | done, re-scoped |
 | 3 -- Shadow mode | CAUTION | done, re-scoped |
-| 4 -- Motion components | CAUTION | 3 field groups done; 7 remaining, now unblocked |
+| 4 -- Motion components | CAUTION | **all fields migrated**; large regression to repair |
 | 5 -- Save staging | CAUTION | done -- no staging struct needed |
 | 6 -- Devirtualising the tick dispatch | DANGER | both dispatch variants, A/B'd |
 | 7 -- Economy and cargo | DANGER | |
@@ -1067,7 +1067,89 @@ Commit 3 is blocked on the staging mechanism, now phase 5, because `subspeed` an
 all nine, verified against the descriptor lists -- so **phase 4 cannot be completed
 before phase 5**.
 
-Sizing the remainder, counted rather than estimated. Totals are textual matches on
+#### All nine fields are now migrated -- and it cost 90%
+
+Every field this phase set out to move is out of `Vehicle`. Two components hold them:
+`VehicleMotion` (`cur_speed`, `subspeed`, `motion_counter`, `tick_counter`, `progress`,
+`direction`) and `VehiclePosition` (`x_pos`, `y_pos`, `z_pos`). Grouping is by *what a
+hot loop reads together*, not by what the fields mean -- `tick_counter` is a generic
+counter, but `CallVehicleTicks` reads it in the same few lines as `motion_counter`, so
+one lookup serves both. Position is separate because a great deal of code wants
+coordinates and nothing else.
+
+Correctness held at every step. Each field group was gated independently, and the
+fingerprint never moved: `3C94DD1E5614C300` on the 3,000-tick Debug gate and
+`015ED3D109C5CCCC` on the 20,000-tick release fixture, with 102 of 102 tests passing
+throughout.
+
+`sizeof(Vehicle)` fell **544 → 528** in release, 560 → 544 in Debug. The first two
+groups changed nothing, as expected from the padding finding; `progress` crossed a
+boundary at 560 → 552, and the twelve contiguous bytes of position took it the rest of
+the way. That confirms the rule from phase 5 -- small scalars vanish into padding, a
+large contiguous block does not.
+
+**And the game loop went from 6,580 ms to 12,529 ms. Ninety percent slower.**
+
+| State | Minimum | Samples |
+| --- | --- | --- |
+| Phase 0 baseline | 6,580 ms | 2 |
+| Phase 5 (`subspeed`, `motion_counter`) | 7,473 ms | 6 |
+| + `tick_counter`, `progress`, `cur_speed`, `direction` | 9,537 ms | 5 |
+| + `x_pos`, `y_pos`, `z_pos` | 12,529 ms | 3 |
+
+This is far outside the phase's predicted 5--20% and outside any noise argument -- the
+last batch spread 0.3%. It is a real result and it needs stating plainly rather than
+filed under "phase 4 is expected to be slower".
+
+**The cause is known, and it is a deliberate shortcut that now has to be paid back.**
+Each field group was converted mechanically, rewriting every `v->x_pos` into
+`v->GetPos().x_pos` one site at a time. That was chosen on purpose: a per-site rewrite
+is correct regardless of how `v`, `front`, `this` and `consist` alias each other in the
+movement code, whereas hoisting a reference requires proving object identity at every
+site. Correctness first, with roughly 850 sites to convert and only the fingerprint as
+a net.
+
+The bill for that choice is exactly what phase 2 measured on `bounds` and what this
+document has warned about since: **the accessor resolved per access rather than per
+function**. Three opaque calls per field access, none of them inlinable across
+translation units:
+
+1. `GetVehicleRegistry()` -- a call returning a function-local static;
+2. `GetVehicleEntity(index)` -- another call, guarded static plus a bounds check plus a
+   vector index;
+3. `registry.get<T>()` -- the sparse-set lookup itself, a page index plus a packed index.
+
+None of it can be common-subexpression-eliminated, because the calls are opaque to the
+optimiser. `direction` alone doubled the Debug run, which is unsurprising once counted:
+86 `v->direction` sites plus the sprite path.
+
+**The repair, in order of expected value:**
+
+1. **Make the two registry lookups inlinable.** Move `VehicleRegistryData` into
+   `vehicle_registry.h`, expose the singleton as a pointer, and make
+   `GetVehicleRegistry()` and `GetVehicleEntity()` inline. This alone turns three calls
+   into zero and lets the optimiser see the whole chain.
+2. **Cache the entity handle on `Vehicle`.** Four bytes buys the removal of the
+   `VehicleID → entity` indirection on every access. It gives back a little of the
+   `sizeof` win, which is the right trade if it buys back tens of percent.
+3. **Then hoist by hand**, in the functions that remain hot after 1 and 2 -- guided by
+   measurement rather than by grepping for multiple accesses.
+
+Doing 1 and 2 before hand-hoisting is deliberate: they are small, surgical and
+measurable, and they change how much hand-hoisting is worth doing at all. Hoisting
+hundreds of sites first would be the expensive way to discover that the constant factor
+was the real problem.
+
+The honest summary of this phase: **the migration is correct and complete, and its
+performance is currently much worse than the plan predicted, for a reason that is fully
+understood and has a concrete fix queued.** Phase 6 was always meant to repay phase 4's
+cost, but it cannot be asked to repay 90% -- most of this has to come back from the
+constant factor before packed iteration is even measurable against it.
+
+#### Sizing, as it stood before the work
+
+Kept for the record, since the estimates proved reasonable. Counted rather than
+estimated. Totals are textual matches on
 `->field` / `.field` / `this->field`, and the write column is a rough upper bound
 that over-counts (`direction` in particular collides with unrelated `Direction
 direction` parameters), so read these as magnitudes:

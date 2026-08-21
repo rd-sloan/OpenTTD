@@ -442,7 +442,7 @@ static CommandCost RemoveRoad(TileIndex tile, DoCommandFlags flags, RoadBits pie
 					/* flooding tile with road works, don't forget to remove the effect vehicle too */
 					assert(_current_company == OWNER_WATER);
 					for (EffectVehicle *v : EffectVehicle::Iterate()) {
-						if (TileVirtXY(v->x_pos, v->y_pos) == tile) {
+						if (TileVirtXY(v->GetPos().x_pos, v->GetPos().y_pos) == tile) {
 							delete v;
 						}
 					}
@@ -2306,7 +2306,7 @@ static VehicleEnterTileStates VehicleEnterTile_Road(Vehicle *v, TileIndex tile, 
 					_roadveh_enter_depot_dir[GetRoadDepotDirection(tile)] == static_cast<Trackdir>(rv->state)) {
 				rv->state = RVSB_IN_DEPOT;
 				rv->vehstatus.Set(VehState::Hidden);
-				rv->direction = ReverseDir(rv->direction);
+				rv->GetMutableMotion().direction = ReverseDir(rv->GetMotion().direction);
 				if (rv->Next() == nullptr) VehicleEnterDepot(rv->First());
 				rv->tile = tile;
 

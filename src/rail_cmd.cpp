@@ -1206,7 +1206,7 @@ CommandCost CmdBuildSingleSignal(DoCommandFlags flags, TileIndex tile, Track tra
 		if (v != nullptr && v->track != Track::Depot) {
 			Train *moving_front = v->GetMovingFront();
 			/* Extend the train's path if it's not stopped or loading, or not at a safe position. */
-			if (!((v->vehstatus.Test(VehState::Stopped) && v->cur_speed == 0) || v->current_order.IsType(OT_LOADING)) ||
+			if (!((v->vehstatus.Test(VehState::Stopped) && v->GetMotion().cur_speed == 0) || v->current_order.IsType(OT_LOADING)) ||
 					!IsSafeWaitingPosition(v, moving_front->tile, moving_front->GetVehicleTrackdir(), true, _settings_game.pf.forbid_90_deg)) {
 				TryPathReserve(v, true);
 			}
@@ -3018,10 +3018,10 @@ int TicksToLeaveDepot(const Train *v)
 	int length = v->CalcNextVehicleOffset() + 1;
 
 	switch (dir) {
-		case DiagDirection::NE: return  (static_cast<int>(v->x_pos & TILE_UNIT_MASK) - (_fractcoords_enter[dir].x - length));
-		case DiagDirection::SE: return -(static_cast<int>(v->y_pos & TILE_UNIT_MASK) - (_fractcoords_enter[dir].y + length));
-		case DiagDirection::SW: return -(static_cast<int>(v->x_pos & TILE_UNIT_MASK) - (_fractcoords_enter[dir].x + length));
-		case DiagDirection::NW: return  (static_cast<int>(v->y_pos & TILE_UNIT_MASK) - (_fractcoords_enter[dir].y - length));
+		case DiagDirection::NE: return  (static_cast<int>(v->GetPos().x_pos & TILE_UNIT_MASK) - (_fractcoords_enter[dir].x - length));
+		case DiagDirection::SE: return -(static_cast<int>(v->GetPos().y_pos & TILE_UNIT_MASK) - (_fractcoords_enter[dir].y + length));
+		case DiagDirection::SW: return -(static_cast<int>(v->GetPos().x_pos & TILE_UNIT_MASK) - (_fractcoords_enter[dir].x + length));
+		case DiagDirection::NW: return  (static_cast<int>(v->GetPos().y_pos & TILE_UNIT_MASK) - (_fractcoords_enter[dir].y - length));
 		default: NOT_REACHED();
 	}
 }
@@ -3072,7 +3072,7 @@ static VehicleEnterTileStates VehicleEnterTile_Rail(Vehicle *v, TileIndex tile, 
 				consist->vehicle_flags.Reset(VehicleFlag::DrivingBackwards);
 			} else {
 				for (Train *u = consist; u != nullptr; u = u->Next()) {
-					u->direction = ReverseDir(u->direction);
+					u->GetMutableMotion().direction = ReverseDir(u->GetMotion().direction);
 				}
 			}
 			VehicleEnterDepot(consist);

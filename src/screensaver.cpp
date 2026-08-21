@@ -16,6 +16,7 @@
 #include "timer/timer.h"
 #include "timer/timer_game_tick.h"
 #include "vehicle_base.h"
+#include "vehicle_components.h"
 #include "vehicle_func.h"
 #include "vehicle_type.h"
 #include "window_func.h"
@@ -95,14 +96,14 @@ static void SwitchVehicle(bool exit_on_invalid = true)
 
 		/* Every time we stick on a moving vehicle, we make it less likely that
 		 * we stick around next cycle to prevent staying on one vehicle for forever. */
-		if (v->cur_speed > 0 && !Chance16I(1, movement_bias, InteractiveRandom())) {
+		if (v->GetMotion().cur_speed > 0 && !Chance16I(1, movement_bias, InteractiveRandom())) {
 			movement_bias -= 1;
 			return;
 		}
 
 		/* If we're not moving, we have a flat 25% chance to stay until the call
 		 * to encourage switching to a moving vehicle. */
-		if (v->cur_speed == 0 && Chance16I(3, 4, InteractiveRandom())) {
+		if (v->GetMotion().cur_speed == 0 && Chance16I(3, 4, InteractiveRandom())) {
 			return;
 		}
 	}

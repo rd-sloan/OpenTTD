@@ -121,7 +121,7 @@ static constexpr DirectionIndexArray<SpriteID> _disaster_images[] = {
 void DisasterVehicle::UpdateImage()
 {
 	SpriteID img = this->image_override;
-	if (img == 0) img = _disaster_images[this->subtype][this->direction];
+	if (img == 0) img = _disaster_images[this->subtype][this->GetMotion().direction];
 	this->sprite_cache.sprite_seq.Set(img);
 }
 
@@ -139,8 +139,8 @@ DisasterVehicle::DisasterVehicle(VehicleID index, int x, int y, Direction direct
 {
 	this->vehstatus = VehState::Unclickable;
 
-	this->x_pos = x;
-	this->y_pos = y;
+	this->GetMutablePos().x_pos = x;
+	this->GetMutablePos().y_pos = y;
 	switch (subtype) {
 		case ST_ZEPPELINER:
 		case ST_SMALL_UFO:
@@ -148,17 +148,17 @@ DisasterVehicle::DisasterVehicle(VehicleID index, int x, int y, Direction direct
 		case ST_HELICOPTER:
 		case ST_BIG_UFO:
 		case ST_BIG_UFO_DESTROYER:
-			GetAircraftFlightLevelBounds(this, &this->z_pos, nullptr);
+			GetAircraftFlightLevelBounds(this, &this->GetMutablePos().z_pos, nullptr);
 			break;
 
 		case ST_HELICOPTER_ROTORS:
-			GetAircraftFlightLevelBounds(this, &this->z_pos, nullptr);
-			this->z_pos += ROTOR_Z_OFFSET;
+			GetAircraftFlightLevelBounds(this, &this->GetMutablePos().z_pos, nullptr);
+			this->GetMutablePos().z_pos += ROTOR_Z_OFFSET;
 			break;
 
 		case ST_SMALL_SUBMARINE:
 		case ST_BIG_SUBMARINE:
-			this->z_pos = 0;
+			this->GetMutablePos().z_pos = 0;
 			break;
 
 		case ST_ZEPPELINER_SHADOW:
@@ -167,12 +167,12 @@ DisasterVehicle::DisasterVehicle(VehicleID index, int x, int y, Direction direct
 		case ST_HELICOPTER_SHADOW:
 		case ST_BIG_UFO_SHADOW:
 		case ST_BIG_UFO_DESTROYER_SHADOW:
-			this->z_pos = 0;
+			this->GetMutablePos().z_pos = 0;
 			this->vehstatus.Set(VehState::Shadow);
 			break;
 	}
 
-	this->direction = direction;
+	this->GetMutableMotion().direction = direction;
 	this->tile = TileVirtXY(x, y);
 	this->subtype = subtype;
 	this->UpdateDeltaXY();
@@ -192,9 +192,9 @@ DisasterVehicle::DisasterVehicle(VehicleID index, int x, int y, Direction direct
  */
 void DisasterVehicle::UpdatePosition(int x, int y, int z)
 {
-	this->x_pos = x;
-	this->y_pos = y;
-	this->z_pos = z;
+	this->GetMutablePos().x_pos = x;
+	this->GetMutablePos().y_pos = y;
+	this->GetMutablePos().z_pos = z;
 	this->tile = TileVirtXY(x, y);
 
 	this->UpdateImage();
@@ -205,19 +205,19 @@ void DisasterVehicle::UpdatePosition(int x, int y, int z)
 		int safe_x = Clamp(x, 0, Map::MaxX() * TILE_SIZE);
 		int safe_y = Clamp(y - 1, 0, Map::MaxY() * TILE_SIZE);
 
-		u->x_pos = x;
-		u->y_pos = y - 1 - (std::max(z - GetSlopePixelZ(safe_x, safe_y), 0) >> 3);
-		safe_y = Clamp(u->y_pos, 0, Map::MaxY() * TILE_SIZE);
-		u->z_pos = GetSlopePixelZ(safe_x, safe_y);
-		u->direction = this->direction;
+		u->GetMutablePos().x_pos = x;
+		u->GetMutablePos().y_pos = y - 1 - (std::max(z - GetSlopePixelZ(safe_x, safe_y), 0) >> 3);
+		safe_y = Clamp(u->GetPos().y_pos, 0, Map::MaxY() * TILE_SIZE);
+		u->GetMutablePos().z_pos = GetSlopePixelZ(safe_x, safe_y);
+		u->GetMutableMotion().direction = this->GetMotion().direction;
 
 		u->UpdateImage();
 		u->UpdatePositionAndViewport();
 
 		if ((u = u->Next()) != nullptr) {
-			u->x_pos = x;
-			u->y_pos = y;
-			u->z_pos = z + ROTOR_Z_OFFSET;
+			u->GetMutablePos().x_pos = x;
+			u->GetMutablePos().y_pos = y;
+			u->GetMutablePos().z_pos = z + ROTOR_Z_OFFSET;
 			u->UpdatePositionAndViewport();
 		}
 	}
@@ -234,10 +234,10 @@ void DisasterVehicle::UpdatePosition(int x, int y, int z)
  */
 static bool DisasterTick_Zeppeliner(DisasterVehicle *v)
 {
-	v->tick_counter++;
+	v->GetMutableMotion().tick_counter++;
 
 	if (v->state < 2) {
-		if (HasBit(v->tick_counter, 0)) return true;
+		if (HasBit(v->GetMotion().tick_counter, 0)) return true;
 
 		GetNewVehiclePosResult gp = GetNewVehiclePos(v);
 
@@ -249,7 +249,7 @@ static bool DisasterTick_Zeppeliner(DisasterVehicle *v)
 				v->age = CalendarTime::MIN_DATE;
 			}
 
-			if (GB(v->tick_counter, 0, 3) == 0) CreateEffectVehicleRel(v, 0, -17, 2, EV_CRASH_SMOKE);
+			if (GB(v->GetMotion().tick_counter, 0, 3) == 0) CreateEffectVehicleRel(v, 0, -17, 2, EV_CRASH_SMOKE);
 
 		} else if (v->state == 0) {
 			if (IsValidTile(v->tile) && IsAirportTile(v->tile)) {
@@ -261,7 +261,7 @@ static bool DisasterTick_Zeppeliner(DisasterVehicle *v)
 			}
 		}
 
-		if (v->y_pos >= (int)((Map::SizeY() + 9) * TILE_SIZE - 1)) {
+		if (v->GetPos().y_pos >= (int)((Map::SizeY() + 9) * TILE_SIZE - 1)) {
 			delete v;
 			return false;
 		}
@@ -282,15 +282,15 @@ static bool DisasterTick_Zeppeliner(DisasterVehicle *v)
 			AI::NewEvent(GetTileOwner(v->tile), new ScriptEventDisasterZeppelinerCleared(st->index));
 		}
 
-		v->UpdatePosition(v->x_pos, v->y_pos, GetAircraftFlightLevel(v));
+		v->UpdatePosition(v->GetPos().x_pos, v->GetPos().y_pos, GetAircraftFlightLevel(v));
 		delete v;
 		return false;
 	}
 
-	int x = v->x_pos;
-	int y = v->y_pos;
+	int x = v->GetPos().x_pos;
+	int y = v->GetPos().y_pos;
 	int z = GetSlopePixelZ(x, y);
-	if (z < v->z_pos) z = v->z_pos - 1;
+	if (z < v->GetPos().z_pos) z = v->GetPos().z_pos - 1;
 	v->UpdatePosition(x, y, z);
 
 	if (++v->age == 1) {
@@ -300,7 +300,7 @@ static bool DisasterTick_Zeppeliner(DisasterVehicle *v)
 	} else if (v->age == 70) {
 		v->image_override = SPR_BLIMP_CRASHED;
 	} else if (v->age <= 300) {
-		if (GB(v->tick_counter, 0, 3) == 0) {
+		if (GB(v->GetMotion().tick_counter, 0, 3) == 0) {
 			uint32_t r = Random();
 
 			CreateEffectVehicleRel(v,
@@ -327,14 +327,14 @@ static bool DisasterTick_Zeppeliner(DisasterVehicle *v)
  */
 static bool DisasterTick_Ufo(DisasterVehicle *ufo)
 {
-	ufo->image_override = (HasBit(++ufo->tick_counter, 3)) ? SPR_UFO_SMALL_SCOUT_DARKER : SPR_UFO_SMALL_SCOUT;
+	ufo->image_override = (HasBit(++ufo->GetMutableMotion().tick_counter, 3)) ? SPR_UFO_SMALL_SCOUT_DARKER : SPR_UFO_SMALL_SCOUT;
 
 	if (ufo->state == 0) {
 		/* Fly around randomly */
 		int x = TileX(ufo->dest_tile) * TILE_SIZE;
 		int y = TileY(ufo->dest_tile) * TILE_SIZE;
-		if (Delta(x, ufo->x_pos) + Delta(y, ufo->y_pos) >= (int)TILE_SIZE) {
-			ufo->direction = GetDirectionTowards(ufo, x, y);
+		if (Delta(x, ufo->GetPos().x_pos) + Delta(y, ufo->GetPos().y_pos) >= (int)TILE_SIZE) {
+			ufo->GetMutableMotion().direction = GetDirectionTowards(ufo, x, y);
 			GetNewVehiclePosResult gp = GetNewVehiclePos(ufo);
 			ufo->UpdatePosition(gp.x, gp.y, GetAircraftFlightLevel(ufo));
 			return true;
@@ -379,23 +379,23 @@ static bool DisasterTick_Ufo(DisasterVehicle *ufo)
 		RoadVehicle *target = RoadVehicle::Get(ufo->dest_tile.base());
 		assert(target != nullptr && target->type == VehicleType::Road && target->IsFrontEngine());
 
-		uint dist = Delta(ufo->x_pos, target->x_pos) + Delta(ufo->y_pos, target->y_pos);
+		uint dist = Delta(ufo->GetPos().x_pos, target->GetPos().x_pos) + Delta(ufo->GetPos().y_pos, target->GetPos().y_pos);
 
 		if (dist < TILE_SIZE && !target->vehstatus.Test(VehState::Hidden) && target->breakdown_ctr == 0) {
 			target->breakdown_ctr = 3;
 			target->breakdown_delay = 140;
 		}
 
-		ufo->direction = GetDirectionTowards(ufo, target->x_pos, target->y_pos);
+		ufo->GetMutableMotion().direction = GetDirectionTowards(ufo, target->GetPos().x_pos, target->GetPos().y_pos);
 		GetNewVehiclePosResult gp = GetNewVehiclePos(ufo);
 
-		int z = ufo->z_pos;
-		if (dist <= TILE_SIZE && z > target->z_pos) z--;
+		int z = ufo->GetPos().z_pos;
+		if (dist <= TILE_SIZE && z > target->GetPos().z_pos) z--;
 		ufo->UpdatePosition(gp.x, gp.y, z);
 
 		/* If the vehicle is hidden in a depot or similar treat it as having "escaped" being crashed to avoid the Ufo looping forever,
 		 * but we'll still explode the surrounding area ;) */
-		if (z <= target->z_pos) {
+		if (z <= target->GetPos().z_pos) {
 			ufo->age++;
 			if (!target->vehstatus.Test(VehState::Hidden) && target->crashed_ctr == 0) {
 				uint victims = target->Crash();
@@ -446,8 +446,8 @@ static void DestructIndustry(Industry *i)
  */
 static bool DisasterTick_Aircraft(DisasterVehicle *v, uint16_t image_override, bool leave_at_top, StringID news_message, IndustryBehaviour behaviour)
 {
-	v->tick_counter++;
-	v->image_override = (v->state == 1 && HasBit(v->tick_counter, 2)) ? image_override : 0;
+	v->GetMutableMotion().tick_counter++;
+	v->image_override = (v->state == 1 && HasBit(v->GetMotion().tick_counter, 2)) ? image_override : 0;
 
 	GetNewVehiclePosResult gp = GetNewVehiclePos(v);
 	v->UpdatePosition(gp.x, gp.y, GetAircraftFlightLevel(v));
@@ -458,7 +458,7 @@ static bool DisasterTick_Aircraft(DisasterVehicle *v, uint16_t image_override, b
 	}
 
 	if (v->state == 2) {
-		if (GB(v->tick_counter, 0, 2) == 0) {
+		if (GB(v->GetMotion().tick_counter, 0, 2) == 0) {
 			Industry *i = Industry::Get(v->dest_tile.base()); // Industry destructor calls ReleaseDisastersTargetingIndustry, so this is valid
 			int x = TileX(i->location.tile) * TILE_SIZE;
 			int y = TileY(i->location.tile) * TILE_SIZE;
@@ -484,8 +484,8 @@ static bool DisasterTick_Aircraft(DisasterVehicle *v, uint16_t image_override, b
 			if (_settings_client.sound.disaster) SndPlayTileFx(SND_12_EXPLOSION, i->location.tile);
 		}
 	} else if (v->state == 0) {
-		int x = v->x_pos + ((leave_at_top ? -15 : 15) * TILE_SIZE);
-		int y = v->y_pos;
+		int x = v->GetPos().x_pos + ((leave_at_top ? -15 : 15) * TILE_SIZE);
+		int y = v->GetPos().y_pos;
 
 		if ((uint)x > Map::MaxX() * TILE_SIZE - 1) return true;
 
@@ -519,8 +519,8 @@ static bool DisasterTick_Helicopter(DisasterVehicle *v)
 /** Helicopter rotor blades; keep these spinning. @copydoc DisasterVehicleTickProc */
 static bool DisasterTick_Helicopter_Rotors(DisasterVehicle *v)
 {
-	v->tick_counter++;
-	if (HasBit(v->tick_counter, 0)) return true;
+	v->GetMutableMotion().tick_counter++;
+	if (HasBit(v->GetMotion().tick_counter, 0)) return true;
 
 	SpriteID &cur_image = v->sprite_cache.sprite_seq.seq[0].sprite;
 	if (++cur_image > SPR_ROTOR_MOVING_3) cur_image = SPR_ROTOR_MOVING_1;
@@ -539,13 +539,13 @@ static bool DisasterTick_Helicopter_Rotors(DisasterVehicle *v)
  */
 static bool DisasterTick_Big_Ufo(DisasterVehicle *v)
 {
-	v->tick_counter++;
+	v->GetMutableMotion().tick_counter++;
 
 	if (v->state == 1) {
 		int x = TileX(v->dest_tile) * TILE_SIZE + TILE_SIZE / 2;
 		int y = TileY(v->dest_tile) * TILE_SIZE + TILE_SIZE / 2;
-		if (Delta(v->x_pos, x) + Delta(v->y_pos, y) >= 8) {
-			v->direction = GetDirectionTowards(v, x, y);
+		if (Delta(v->GetPos().x_pos, x) + Delta(v->GetPos().y_pos, y) >= 8) {
+			v->GetMutableMotion().direction = GetDirectionTowards(v, x, y);
 
 			GetNewVehiclePosResult gp = GetNewVehiclePos(v);
 			v->UpdatePosition(gp.x, gp.y, GetAircraftFlightLevel(v));
@@ -558,9 +558,9 @@ static bool DisasterTick_Big_Ufo(DisasterVehicle *v)
 			return false;
 		}
 
-		int z = GetSlopePixelZ(v->x_pos, v->y_pos);
-		if (z < v->z_pos) {
-			v->UpdatePosition(v->x_pos, v->y_pos, v->z_pos - 1);
+		int z = GetSlopePixelZ(v->GetPos().x_pos, v->GetPos().y_pos);
+		if (z < v->GetPos().z_pos) {
+			v->UpdatePosition(v->GetPos().x_pos, v->GetPos().y_pos, v->GetPos().z_pos - 1);
 			return true;
 		}
 
@@ -568,7 +568,7 @@ static bool DisasterTick_Big_Ufo(DisasterVehicle *v)
 
 		for (Vehicle *target : Vehicle::Iterate()) {
 			if (target->IsGroundVehicle()) {
-				if (Delta(target->x_pos, v->x_pos) + Delta(target->y_pos, v->y_pos) <= 12 * (int)TILE_SIZE) {
+				if (Delta(target->GetPos().x_pos, v->GetPos().x_pos) + Delta(target->GetPos().y_pos, v->GetPos().y_pos) <= 12 * (int)TILE_SIZE) {
 					target->breakdown_ctr = 5;
 					target->breakdown_delay = 0xF0;
 				}
@@ -582,14 +582,14 @@ static bool DisasterTick_Big_Ufo(DisasterVehicle *v)
 			delete v;
 			return false;
 		}
-		DisasterVehicle *u = DisasterVehicle::Create(-6 * (int)TILE_SIZE, v->y_pos, Direction::SW, ST_BIG_UFO_DESTROYER, v->index);
-		DisasterVehicle *w = DisasterVehicle::Create(-6 * (int)TILE_SIZE, v->y_pos, Direction::SW, ST_BIG_UFO_DESTROYER_SHADOW);
+		DisasterVehicle *u = DisasterVehicle::Create(-6 * (int)TILE_SIZE, v->GetPos().y_pos, Direction::SW, ST_BIG_UFO_DESTROYER, v->index);
+		DisasterVehicle *w = DisasterVehicle::Create(-6 * (int)TILE_SIZE, v->GetPos().y_pos, Direction::SW, ST_BIG_UFO_DESTROYER_SHADOW);
 		u->SetNext(w);
 	} else if (v->state == 0) {
 		int x = TileX(v->dest_tile) * TILE_SIZE;
 		int y = TileY(v->dest_tile) * TILE_SIZE;
-		if (Delta(x, v->x_pos) + Delta(y, v->y_pos) >= (int)TILE_SIZE) {
-			v->direction = GetDirectionTowards(v, x, y);
+		if (Delta(x, v->GetPos().x_pos) + Delta(y, v->GetPos().y_pos) >= (int)TILE_SIZE) {
+			v->GetMutableMotion().direction = GetDirectionTowards(v, x, y);
 			GetNewVehiclePosResult gp = GetNewVehiclePos(v);
 			v->UpdatePosition(gp.x, gp.y, GetAircraftFlightLevel(v));
 			return true;
@@ -641,7 +641,7 @@ static bool DisasterTick_Big_Ufo(DisasterVehicle *v)
  */
 static bool DisasterTick_Big_Ufo_Destroyer(DisasterVehicle *v)
 {
-	v->tick_counter++;
+	v->GetMutableMotion().tick_counter++;
 
 	GetNewVehiclePosResult gp = GetNewVehiclePos(v);
 	v->UpdatePosition(gp.x, gp.y, GetAircraftFlightLevel(v));
@@ -653,7 +653,7 @@ static bool DisasterTick_Big_Ufo_Destroyer(DisasterVehicle *v)
 
 	if (v->state == 0) {
 		Vehicle *u = Vehicle::Get(v->big_ufo_destroyer_target);
-		if (Delta(v->x_pos, u->x_pos) > (int)TILE_SIZE) return true;
+		if (Delta(v->GetPos().x_pos, u->GetPos().x_pos) > (int)TILE_SIZE) return true;
 		v->state = 1;
 
 		CreateEffectVehicleRel(u, 0, 7, 8, EV_EXPLOSION_LARGE);
@@ -664,8 +664,8 @@ static bool DisasterTick_Big_Ufo_Destroyer(DisasterVehicle *v)
 		for (int i = 0; i != 80; i++) {
 			uint32_t r = Random();
 			CreateEffectVehicleAbove(
-				GB(r, 0, 6) + v->x_pos - 32,
-				GB(r, 5, 6) + v->y_pos - 32,
+				GB(r, 0, 6) + v->GetPos().x_pos - 32,
+				GB(r, 5, 6) + v->GetPos().y_pos - 32,
 				0,
 				EV_EXPLOSION_SMALL);
 		}
@@ -688,26 +688,26 @@ static bool DisasterTick_Big_Ufo_Destroyer(DisasterVehicle *v)
  */
 static bool DisasterTick_Submarine(DisasterVehicle *v)
 {
-	v->tick_counter++;
+	v->GetMutableMotion().tick_counter++;
 
 	if (++v->age > 8880) {
 		delete v;
 		return false;
 	}
 
-	if (!HasBit(v->tick_counter, 0)) return true;
+	if (!HasBit(v->GetMotion().tick_counter, 0)) return true;
 
-	TileIndex tile = v->tile + TileOffsByDiagDir(DirToDiagDir(v->direction));
+	TileIndex tile = v->tile + TileOffsByDiagDir(DirToDiagDir(v->GetMotion().direction));
 	if (IsValidTile(tile)) {
 		TrackBits trackbits = TrackdirBitsToTrackBits(GetTileTrackStatus(tile, TransportType::Water, RoadTramType::Invalid).trackdirs);
 		if (trackbits == TRACK_BIT_ALL && !Chance16(1, 90)) {
 			GetNewVehiclePosResult gp = GetNewVehiclePos(v);
-			v->UpdatePosition(gp.x, gp.y, v->z_pos);
+			v->UpdatePosition(gp.x, gp.y, v->GetPos().z_pos);
 			return true;
 		}
 	}
 
-	v->direction = ChangeDir(v->direction, GB(Random(), 0, 1) ? DirDiff::Right90 : DirDiff::Left90);
+	v->GetMutableMotion().direction = ChangeDir(v->GetMotion().direction, GB(Random(), 0, 1) ? DirDiff::Right90 : DirDiff::Left90);
 
 	return true;
 }
@@ -1019,7 +1019,7 @@ void ReleaseDisasterVehicle(VehicleID vehicle)
 	/* Revert to target-searching */
 	v->state = 0;
 	v->dest_tile = RandomTile();
-	GetAircraftFlightLevelBounds(v, &v->z_pos, nullptr);
+	GetAircraftFlightLevelBounds(v, &v->GetMutablePos().z_pos, nullptr);
 	v->age = CalendarTime::MIN_DATE;
 }
 

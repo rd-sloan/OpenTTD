@@ -12,6 +12,7 @@
 
 #include "station_map.h"
 #include "vehicle_base.h"
+#include "vehicle_components.h"
 
 /**
  * Base values for flight levels above ground level for 'normal' flight and holding patterns.
@@ -94,7 +95,7 @@ struct Aircraft final : public SpecializedVehicle<Aircraft, VehicleType::Aircraf
 	ExpensesType GetExpenseType(bool income) const override { return income ? ExpensesType::AircraftRevenue : ExpensesType::AircraftRun; }
 	bool IsPrimaryVehicle() const override                  { return this->IsNormalAircraft(); }
 	void GetImage(Direction direction, EngineImageType image_type, VehicleSpriteSeq *result) const override;
-	int GetDisplaySpeed() const override    { return this->cur_speed; }
+	int GetDisplaySpeed() const override    { return this->GetMotion().cur_speed; }
 	int GetDisplayMaxSpeed() const override { return this->GetVehicleCache().cached_max_speed; }
 	int GetSpeedOldUnits() const            { return this->GetVehicleCache().cached_max_speed * 10 / 128; }
 	int GetCurrentMaxSpeed() const override { return this->GetSpeedOldUnits(); }

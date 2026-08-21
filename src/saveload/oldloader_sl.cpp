@@ -1179,14 +1179,14 @@ static const OldChunks vehicle_chunk[] = {
 	OCL_SVAR( OC_FILE_U16 | OC_VAR_U32, Vehicle, date_of_last_service ),
 	OCL_SVAR( OC_UINT16, Vehicle, service_interval ),
 	OCL_SVAR( OC_FILE_U8 | OC_VAR_U16, Vehicle, last_station_visited ),
-	OCL_SVAR( OC_TTD | OC_UINT8, Vehicle, tick_counter ),
+	OCL_SVAR_COMPONENT( OC_TTD | OC_UINT8, GetMutableMotion, tick_counter ),
 	OCL_CNULL( OC_TTD, 2 ), ///< max_speed, now it is calculated.
 	OCL_CNULL( OC_TTO, 1 ), ///< max_speed, now it is calculated.
 
-	OCL_SVAR( OC_FILE_U16 | OC_VAR_I32, Vehicle, x_pos ),
-	OCL_SVAR( OC_FILE_U16 | OC_VAR_I32, Vehicle, y_pos ),
-	OCL_SVAR( OC_FILE_U8  | OC_VAR_I32, Vehicle, z_pos ),
-	OCL_SVAR(  OC_UINT8, Vehicle, direction ),
+	OCL_SVAR_COMPONENT( OC_FILE_U16 | OC_VAR_I32, GetMutablePos, x_pos ),
+	OCL_SVAR_COMPONENT( OC_FILE_U16 | OC_VAR_I32, GetMutablePos, y_pos ),
+	OCL_SVAR_COMPONENT( OC_FILE_U8  | OC_VAR_I32, GetMutablePos, z_pos ),
+	OCL_SVAR_COMPONENT( OC_UINT8, GetMutableMotion, direction ),
 	OCL_NULL( 2 ),         ///< x_offs and y_offs, calculated automatically
 	OCL_NULL( 2 ),         ///< x_extent and y_extent, calculated automatically
 	OCL_NULL( 1 ),         ///< z_extent, calculated automatically
@@ -1198,17 +1198,11 @@ static const OldChunks vehicle_chunk[] = {
 	OCL_NULL( 8 ),        ///< Vehicle sprite box, calculated automatically
 
 	OCL_SVAR( OC_FILE_U16 | OC_VAR_U8, Vehicle, vehstatus ),
-	OCL_SVAR( OC_TTD | OC_UINT16, Vehicle, cur_speed ),
-	OCL_SVAR( OC_TTO | OC_FILE_U8 | OC_VAR_U16, Vehicle, cur_speed ),
-	/* `subspeed` lives in the VehicleMotion component rather than on Vehicle, so this
-	 * resolves the component instead of taking a member offset. LoadChunk skips entries
-	 * whose base is nullptr, so the lookup always has a real vehicle to resolve.
-	 * @see saveload/component_sl.h */
-	{ OC_UINT8, 1, nullptr, [] (void *b) -> void * {
-		return std::addressof(static_cast<Vehicle *>(b)->GetMutableMotion().subspeed);
-	}, nullptr },
+	OCL_SVAR_COMPONENT( OC_TTD | OC_UINT16, GetMutableMotion, cur_speed ),
+	OCL_SVAR_COMPONENT( OC_TTO | OC_FILE_U8 | OC_VAR_U16, GetMutableMotion, cur_speed ),
+	OCL_SVAR_COMPONENT( OC_UINT8, GetMutableMotion, subspeed ),
 	OCL_SVAR(  OC_UINT8, Vehicle, acceleration ),
-	OCL_SVAR(  OC_UINT8, Vehicle, progress ),
+	OCL_SVAR_COMPONENT( OC_UINT8, GetMutableMotion, progress ),
 
 	OCL_SVAR(  OC_UINT8, Vehicle, cargo_type ),
 	OCL_SVAR( OC_TTD | OC_UINT16, Vehicle, cargo_cap ),
@@ -1218,7 +1212,7 @@ static const OldChunks vehicle_chunk[] = {
 	OCL_VAR (  OC_UINT8, 1,       &_cargo_source ),
 	OCL_VAR (  OC_UINT8, 1,       &_cargo_periods ),
 
-	OCL_SVAR( OC_TTO | OC_UINT8, Vehicle, tick_counter ),
+	OCL_SVAR_COMPONENT( OC_TTO | OC_UINT8, GetMutableMotion, tick_counter ),
 
 	OCL_SVAR( OC_FILE_U16 | OC_VAR_U32, Vehicle, age ),
 	OCL_SVAR( OC_FILE_U16 | OC_VAR_U32, Vehicle, max_age ),

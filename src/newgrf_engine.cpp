@@ -267,7 +267,7 @@ static uint8_t MapAircraftMovementAction(const Aircraft *v)
 {
 	switch (v->state) {
 		case HANGAR:
-			return (v->cur_speed > 0) ? AMA_TTDP_LANDING_TO_HANGAR : AMA_TTDP_IN_HANGAR;
+			return (v->GetMotion().cur_speed > 0) ? AMA_TTDP_LANDING_TO_HANGAR : AMA_TTDP_IN_HANGAR;
 
 		case TERM1:
 		case HELIPAD1:
@@ -511,7 +511,7 @@ static uint32_t VehicleGetVariable(Vehicle *v, const VehicleScopeResolver *objec
 			{
 				const Vehicle *w = v->Next();
 				assert(w != nullptr);
-				uint16_t altitude = ClampTo<uint16_t>(v->z_pos - w->z_pos); // Aircraft height - shadow height
+				uint16_t altitude = ClampTo<uint16_t>(v->GetPos().z_pos - w->GetPos().z_pos); // Aircraft height - shadow height
 				uint8_t airporttype = ATP_TTDP_LARGE;
 
 				const Station *st = GetTargetAirportIfValid(Aircraft::From(v));
@@ -533,8 +533,8 @@ static uint32_t VehicleGetVariable(Vehicle *v, const VehicleScopeResolver *objec
 
 			const Vehicle *u_p = v->Previous();
 			const Vehicle *u_n = v->Next();
-			DirDiff f = (u_p == nullptr) ?  DirDiff::Same : DirDifference(u_p->direction, v->direction);
-			DirDiff b = (u_n == nullptr) ?  DirDiff::Same : DirDifference(v->direction, u_n->direction);
+			DirDiff f = (u_p == nullptr) ?  DirDiff::Same : DirDifference(u_p->GetMotion().direction, v->GetMotion().direction);
+			DirDiff b = (u_n == nullptr) ?  DirDiff::Same : DirDifference(v->GetMotion().direction, u_n->GetMotion().direction);
 			DirDiff t = ChangeDirDiff(f, b);
 
 			return ((t > DirDiff::Reverse ? to_underlying(t) | 8 : to_underlying(t)) << 16) |
@@ -655,16 +655,16 @@ static uint32_t VehicleGetVariable(Vehicle *v, const VehicleScopeResolver *objec
 
 			/* Get direction difference. */
 			bool prev = static_cast<int8_t>(parameter) < 0;
-			DirDiff dirdiff = prev ? DirDifference(u->direction, v->direction) : DirDifference(v->direction, u->direction);
+			DirDiff dirdiff = prev ? DirDifference(u->GetMotion().direction, v->GetMotion().direction) : DirDifference(v->GetMotion().direction, u->GetMotion().direction);
 			uint32_t ret = to_underlying(dirdiff);
 			if (dirdiff > DirDiff::Reverse) ret |= 0x08;
 
 			if (u->vehstatus.Test(VehState::Hidden)) ret |= 0x80;
 
 			/* Get position difference. */
-			ret |= ((prev ? u->x_pos - v->x_pos : v->x_pos - u->x_pos) & 0xFF) << 8;
-			ret |= ((prev ? u->y_pos - v->y_pos : v->y_pos - u->y_pos) & 0xFF) << 16;
-			ret |= ((prev ? u->z_pos - v->z_pos : v->z_pos - u->z_pos) & 0xFF) << 24;
+			ret |= ((prev ? u->GetPos().x_pos - v->GetPos().x_pos : v->GetPos().x_pos - u->GetPos().x_pos) & 0xFF) << 8;
+			ret |= ((prev ? u->GetPos().y_pos - v->GetPos().y_pos : v->GetPos().y_pos - u->GetPos().y_pos) & 0xFF) << 16;
+			ret |= ((prev ? u->GetPos().z_pos - v->GetPos().z_pos : v->GetPos().z_pos - u->GetPos().z_pos) & 0xFF) << 24;
 
 			return ret;
 		}
@@ -797,7 +797,7 @@ static uint32_t VehicleGetVariable(Vehicle *v, const VehicleScopeResolver *objec
 		case 0x14: return v->GetServiceInterval();
 		case 0x15: return GB(v->GetServiceInterval(), 8, 8);
 		case 0x16: return v->last_station_visited.base();
-		case 0x17: return v->tick_counter;
+		case 0x17: return v->GetMotion().tick_counter;
 		case 0x18:
 		case 0x19: {
 			uint max_speed;
@@ -812,12 +812,12 @@ static uint32_t VehicleGetVariable(Vehicle *v, const VehicleScopeResolver *objec
 			}
 			return (variable - 0x80) == 0x18 ? max_speed : GB(max_speed, 8, 8);
 		}
-		case 0x1A: return v->x_pos;
-		case 0x1B: return GB(v->x_pos, 8, 8);
-		case 0x1C: return v->y_pos;
-		case 0x1D: return GB(v->y_pos, 8, 8);
-		case 0x1E: return v->z_pos;
-		case 0x1F: return to_underlying(object->rotor_in_gui ? Direction::W : v->direction); // for rotors the spriteset contains animation frames, so NewGRF need a different way to tell the helicopter orientation.
+		case 0x1A: return v->GetPos().x_pos;
+		case 0x1B: return GB(v->GetPos().x_pos, 8, 8);
+		case 0x1C: return v->GetPos().y_pos;
+		case 0x1D: return GB(v->GetPos().y_pos, 8, 8);
+		case 0x1E: return v->GetPos().z_pos;
+		case 0x1F: return to_underlying(object->rotor_in_gui ? Direction::W : v->GetMotion().direction); // for rotors the spriteset contains animation frames, so NewGRF need a different way to tell the helicopter orientation.
 		case 0x20: break; // not implemented
 		case 0x21: break; // not implemented
 		case 0x22: break; // not implemented
@@ -838,8 +838,8 @@ static uint32_t VehicleGetVariable(Vehicle *v, const VehicleScopeResolver *objec
 		case 0x31: break; // not implemented
 		case 0x32: return v->vehstatus.base();
 		case 0x33: return 0; // non-existent high byte of vehstatus
-		case 0x34: return v->type == VehicleType::Aircraft ? (v->cur_speed * 10) / 128 : v->cur_speed;
-		case 0x35: return GB(v->type == VehicleType::Aircraft ? (v->cur_speed * 10) / 128 : v->cur_speed, 8, 8);
+		case 0x34: return v->type == VehicleType::Aircraft ? (v->GetMotion().cur_speed * 10) / 128 : v->GetMotion().cur_speed;
+		case 0x35: return GB(v->type == VehicleType::Aircraft ? (v->GetMotion().cur_speed * 10) / 128 : v->GetMotion().cur_speed, 8, 8);
 		case 0x36: return v->GetMotion().subspeed;
 		case 0x37: return v->acceleration;
 		case 0x38: break; // not implemented

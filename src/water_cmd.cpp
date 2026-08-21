@@ -1084,11 +1084,11 @@ static void FloodVehicleProc(Vehicle *v, int z)
 			if (!IsAirportTile(v->tile) || GetTileMaxZ(v->tile) != 0) break;
 			if (v->subtype == AIR_SHADOW) break;
 
-			/* We compare v->z_pos against delta_z + 1 because the shadow
+			/* We compare v->GetPos().z_pos against delta_z + 1 because the shadow
 			 * is at delta_z and the actual aircraft at delta_z + 1. */
 			const Station *st = Station::GetByTile(v->tile);
 			const AirportFTAClass *airport = st->airport.GetFTA();
-			if (v->z_pos != airport->delta_z + 1) break;
+			if (v->GetPos().z_pos != airport->delta_z + 1) break;
 
 			FloodVehicle(v);
 			break;
@@ -1096,7 +1096,7 @@ static void FloodVehicleProc(Vehicle *v, int z)
 
 		case VehicleType::Train:
 		case VehicleType::Road: {
-			if (v->z_pos > z) break;
+			if (v->GetPos().z_pos > z) break;
 			FloodVehicle(v->First());
 			break;
 		}

@@ -131,7 +131,7 @@ struct GroundVehicle : public SpecializedVehicle<T, Type> {
 	 */
 	inline void UpdateZPositionAndInclination()
 	{
-		this->z_pos = GetSlopePixelZ(this->x_pos, this->y_pos, true);
+		this->GetMutablePos().z_pos = GetSlopePixelZ(this->GetPos().x_pos, this->GetPos().y_pos, true);
 		this->gv_flags.Reset({GroundVehicleFlag::GoingUp, GroundVehicleFlag::GoingDown});
 
 		if (T::From(this)->TileMayHaveSlopedTrack()) {
@@ -139,10 +139,10 @@ struct GroundVehicle : public SpecializedVehicle<T, Type> {
 			 * direction it is sloped, we get the 'z' at the center of
 			 * the tile (middle_z) and the edge of the tile (old_z),
 			 * which we then can compare. */
-			int middle_z = GetSlopePixelZ((this->x_pos & ~TILE_UNIT_MASK) | (TILE_SIZE / 2), (this->y_pos & ~TILE_UNIT_MASK) | (TILE_SIZE / 2), true);
+			int middle_z = GetSlopePixelZ((this->GetPos().x_pos & ~TILE_UNIT_MASK) | (TILE_SIZE / 2), (this->GetPos().y_pos & ~TILE_UNIT_MASK) | (TILE_SIZE / 2), true);
 
-			if (middle_z != this->z_pos) {
-				this->gv_flags.Set((middle_z > this->z_pos) ? GroundVehicleFlag::GoingUp : GroundVehicleFlag::GoingDown);
+			if (middle_z != this->GetPos().z_pos) {
+				this->gv_flags.Set((middle_z > this->GetPos().z_pos) ? GroundVehicleFlag::GoingUp : GroundVehicleFlag::GoingDown);
 			}
 		}
 	}
@@ -161,25 +161,25 @@ struct GroundVehicle : public SpecializedVehicle<T, Type> {
 		if (this->gv_flags.Test(GroundVehicleFlag::GoingUp)) {
 			switch (this->GetMovingDirection()) {
 				case Direction::NE:
-					this->z_pos += (this->x_pos & 1) ^ 1; break;
+					this->GetMutablePos().z_pos += (this->GetPos().x_pos & 1) ^ 1; break;
 				case Direction::SW:
-					this->z_pos += (this->x_pos & 1); break;
+					this->GetMutablePos().z_pos += (this->GetPos().x_pos & 1); break;
 				case Direction::NW:
-					this->z_pos += (this->y_pos & 1) ^ 1; break;
+					this->GetMutablePos().z_pos += (this->GetPos().y_pos & 1) ^ 1; break;
 				case Direction::SE:
-					this->z_pos += (this->y_pos & 1); break;
+					this->GetMutablePos().z_pos += (this->GetPos().y_pos & 1); break;
 				default: break;
 			}
 		} else if (this->gv_flags.Test(GroundVehicleFlag::GoingDown)) {
 			switch (this->GetMovingDirection()) {
 				case Direction::NE:
-					this->z_pos -= (this->x_pos & 1) ^ 1; break;
+					this->GetMutablePos().z_pos -= (this->GetPos().x_pos & 1) ^ 1; break;
 				case Direction::SW:
-					this->z_pos -= (this->x_pos & 1); break;
+					this->GetMutablePos().z_pos -= (this->GetPos().x_pos & 1); break;
 				case Direction::NW:
-					this->z_pos -= (this->y_pos & 1) ^ 1; break;
+					this->GetMutablePos().z_pos -= (this->GetPos().y_pos & 1) ^ 1; break;
 				case Direction::SE:
-					this->z_pos -= (this->y_pos & 1); break;
+					this->GetMutablePos().z_pos -= (this->GetPos().y_pos & 1); break;
 				default: break;
 			}
 		}
@@ -196,14 +196,14 @@ struct GroundVehicle : public SpecializedVehicle<T, Type> {
 		if (this->gv_flags.Any({GroundVehicleFlag::GoingUp, GroundVehicleFlag::GoingDown})) {
 			if (T::From(this)->HasToUseGetSlopePixelZ()) {
 				/* In some cases, we have to use GetSlopePixelZ() */
-				this->z_pos = GetSlopePixelZ(this->x_pos, this->y_pos, true);
+				this->GetMutablePos().z_pos = GetSlopePixelZ(this->GetPos().x_pos, this->GetPos().y_pos, true);
 				return;
 			}
 			/* DirToDiagDir() is a simple right shift */
 			DiagDirection dir = DirToDiagDir(this->GetMovingDirection());
 			/* Read variables, so the compiler knows the access doesn't trap */
-			int8_t x_pos = this->x_pos;
-			int8_t y_pos = this->y_pos;
+			int8_t x_pos = this->GetPos().x_pos;
+			int8_t y_pos = this->GetPos().y_pos;
 			/* DiagDirToAxis() is a simple mask */
 			int8_t d = DiagDirToAxis(dir) == Axis::X ? x_pos : y_pos;
 			/* We need only the least significant bit */
@@ -212,10 +212,10 @@ struct GroundVehicle : public SpecializedVehicle<T, Type> {
 			/* Subtraction instead of addition because we are testing for GroundVehicleFlag::GoingUp.
 			 * GroundVehicleFlag::GoingUp is used because it's bit 0, so simple AND can be used,
 			 * without any shift */
-			this->z_pos += this->gv_flags.Test(GroundVehicleFlag::GoingUp) ? d : -d;
+			this->GetMutablePos().z_pos += this->gv_flags.Test(GroundVehicleFlag::GoingUp) ? d : -d;
 		}
 
-		assert(this->z_pos == GetSlopePixelZ(this->x_pos, this->y_pos, true));
+		assert(this->GetPos().z_pos == GetSlopePixelZ(this->GetPos().x_pos, this->GetPos().y_pos, true));
 	}
 
 	/**
@@ -226,7 +226,7 @@ struct GroundVehicle : public SpecializedVehicle<T, Type> {
 	 */
 	inline int UpdateInclination(bool new_tile, bool update_delta)
 	{
-		int old_z = this->z_pos;
+		int old_z = this->GetPos().z_pos;
 
 		if (new_tile) {
 			this->UpdateZPositionAndInclination();
@@ -352,9 +352,9 @@ struct GroundVehicle : public SpecializedVehicle<T, Type> {
 	 */
 	inline void SetLastSpeed()
 	{
-		if (this->cur_speed != this->gcache.last_speed) {
+		if (this->GetMotion().cur_speed != this->gcache.last_speed) {
 			SetWindowWidgetDirty(WindowClass::VehicleView, this->index, WID_VV_START_STOP);
-			this->gcache.last_speed = this->cur_speed;
+			this->gcache.last_speed = this->GetMotion().cur_speed;
 		}
 	}
 
@@ -384,8 +384,8 @@ protected:
 		/* When we are going faster than the maximum speed, reduce the speed
 		 * somewhat gradually. But never lower than the maximum speed. */
 		int tempmax = max_speed;
-		if (this->cur_speed > max_speed) {
-			tempmax = std::max(this->cur_speed - (this->cur_speed / 10) - 1, max_speed);
+		if (this->GetMotion().cur_speed > max_speed) {
+			tempmax = std::max(this->GetMotion().cur_speed - (this->GetMotion().cur_speed / 10) - 1, max_speed);
 		}
 
 		/* Enforce a maximum and minimum speed. Normally we would use something like
@@ -393,12 +393,12 @@ protected:
 		 * threshold for some reason. That makes acceleration fail and assertions
 		 * happen in Clamp. So make it explicit that min_speed overrules the maximum
 		 * speed by explicit ordering of min and max. */
-		this->cur_speed = spd = std::max(std::min(this->cur_speed + ((int)spd >> 8), tempmax), min_speed);
+		this->GetMutableMotion().cur_speed = spd = std::max(std::min(this->GetMotion().cur_speed + ((int)spd >> 8), tempmax), min_speed);
 
 		int scaled_spd = this->GetAdvanceSpeed(spd);
 
-		scaled_spd += this->progress;
-		this->progress = 0; // set later in *Handler or *Controller
+		scaled_spd += motion.progress;
+		motion.progress = 0; // set later in *Handler or *Controller
 		return scaled_spd;
 	}
 };

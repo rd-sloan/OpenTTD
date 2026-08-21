@@ -87,7 +87,7 @@ void CheckTrainsLengths()
 			for (const Train *u = v->GetMovingFront(), *w = v->GetMovingNext(); w != nullptr; u = w, w = w->GetMovingNext()) {
 				if (u->track != Track::Depot) {
 					if ((w->track != Track::Depot &&
-							std::max(abs(u->x_pos - w->x_pos), abs(u->y_pos - w->y_pos)) != u->CalcNextVehicleOffset()) ||
+							std::max(abs(u->GetPos().x_pos - w->GetPos().x_pos), abs(u->GetPos().y_pos - w->GetPos().y_pos)) != u->CalcNextVehicleOffset()) ||
 							(w->track == Track::Depot && TicksToLeaveDepot(u) <= 0)) {
 						ShowErrorMessage(GetEncodedString(STR_BROKEN_VEHICLE_LENGTH, v->index, v->owner), {}, WarningLevel::Critical);
 
@@ -329,8 +329,8 @@ uint16_t Train::GetCurveSpeedLimit() const
 	int pos = 0;
 	int lastpos = -1;
 	for (const Train *u = this; u->Next() != nullptr; u = u->Next(), pos += u->gcache.cached_veh_length) {
-		Direction this_dir = u->direction;
-		Direction next_dir = u->Next()->direction;
+		Direction this_dir = u->GetMotion().direction;
+		Direction next_dir = u->Next()->GetMotion().direction;
 
 		DirDiff dirdiff = DirDifference(this_dir, next_dir);
 		if (dirdiff == DirDiff::Same) continue;
@@ -408,9 +408,9 @@ int Train::GetCurrentMaxSpeed() const
 			if (distance_to_go > 0) {
 				int st_max_speed = 120;
 
-				int delta_v = this->cur_speed / (distance_to_go + 1);
-				if (max_speed > (this->cur_speed - delta_v)) {
-					st_max_speed = this->cur_speed - (delta_v / 10);
+				int delta_v = this->GetMotion().cur_speed / (distance_to_go + 1);
+				if (max_speed > (this->GetMotion().cur_speed - delta_v)) {
+					st_max_speed = this->GetMotion().cur_speed - (delta_v / 10);
 				}
 
 				st_max_speed = std::max(st_max_speed, 25 * distance_to_go);
@@ -680,15 +680,15 @@ static CommandCost CmdBuildRailWagon(DoCommandFlags flags, TileIndex tile, const
 
 		DiagDirection dir = GetRailDepotDirection(tile);
 
-		v->direction = DiagDirToDir(dir);
+		v->GetMutableMotion().direction = DiagDirToDir(dir);
 		v->tile = tile;
 
 		int x = TileX(tile) * TILE_SIZE | _vehicle_initial_x_fract[dir];
 		int y = TileY(tile) * TILE_SIZE | _vehicle_initial_y_fract[dir];
 
-		v->x_pos = x;
-		v->y_pos = y;
-		v->z_pos = GetSlopePixelZ(x, y, true);
+		v->GetMutablePos().x_pos = x;
+		v->GetMutablePos().y_pos = y;
+		v->GetMutablePos().z_pos = GetSlopePixelZ(x, y, true);
 		v->owner = _current_company;
 		v->track = Track::Depot;
 		v->vehstatus = {VehState::Hidden, VehState::DefaultPalette};
@@ -759,12 +759,12 @@ static void AddRearEngineToMultiheadedTrain(Train *v)
 	Train *u = Train::Create();
 	v->value >>= 1;
 	u->value = v->value;
-	u->direction = v->direction;
+	u->GetMutableMotion().direction = v->GetMotion().direction;
 	u->owner = v->owner;
 	u->tile = v->tile;
-	u->x_pos = v->x_pos;
-	u->y_pos = v->y_pos;
-	u->z_pos = v->z_pos;
+	u->GetMutablePos().x_pos = v->GetPos().x_pos;
+	u->GetMutablePos().y_pos = v->GetPos().y_pos;
+	u->GetMutablePos().z_pos = v->GetPos().z_pos;
 	u->track = Track::Depot;
 	u->vehstatus = v->vehstatus;
 	u->vehstatus.Reset(VehState::Stopped);
@@ -817,12 +817,12 @@ CommandCost CmdBuildRailVehicle(DoCommandFlags flags, TileIndex tile, const Engi
 
 		Train *v = Train::Create();
 		*ret = v;
-		v->direction = DiagDirToDir(dir);
+		v->GetMutableMotion().direction = DiagDirToDir(dir);
 		v->tile = tile;
 		v->owner = _current_company;
-		v->x_pos = x;
-		v->y_pos = y;
-		v->z_pos = GetSlopePixelZ(x, y, true);
+		v->GetMutablePos().x_pos = x;
+		v->GetMutablePos().y_pos = y;
+		v->GetMutablePos().z_pos = GetSlopePixelZ(x, y, true);
 		v->track = Track::Depot;
 		v->vehstatus = {VehState::Hidden, VehState::Stopped, VehState::DefaultPalette};
 		v->spritenum = rvi->image_index;
@@ -1539,7 +1539,7 @@ void Train::UpdateDeltaXY()
 	/* If flipped and vehicle length is odd, we need to adjust the bounding box offset slightly. */
 	int flip_offs = flipped && (this->gcache.cached_veh_length & 1);
 
-	Direction dir = this->direction;
+	Direction dir = this->GetMotion().direction;
 	if (flipped) dir = ReverseDir(dir);
 
 	if (!IsDiagonalDirection(dir)) {
@@ -1605,7 +1605,7 @@ static void MarkTrainAsStuck(Train *consist)
 		consist->wait_counter = 0;
 
 		/* Stop train */
-		consist->cur_speed = 0;
+		consist->GetMutableMotion().cur_speed = 0;
 		consist->GetMutableMotion().subspeed = 0;
 		consist->SetLastSpeed();
 
@@ -1640,19 +1640,19 @@ static void SwapTrainFlags(GroundVehicleFlags *swap_flag1, GroundVehicleFlags *s
 static void UpdateStatusAfterSwap(Train *v, bool reverse = true)
 {
 	/* Maybe reverse the direction. */
-	if (reverse) v->direction = ReverseDir(v->direction);
+	if (reverse) v->GetMutableMotion().direction = ReverseDir(v->GetMotion().direction);
 
 	/* Call the proper EnterTile function unless we are in a wormhole. */
 	if (v->track != Track::Wormhole) {
-		VehicleEnterTile(v, v->tile, v->x_pos, v->y_pos);
+		VehicleEnterTile(v, v->tile, v->GetPos().x_pos, v->GetPos().y_pos);
 	} else {
 		/* VehicleEnterTile_TunnelBridge() sets Track::Wormhole when the vehicle
 		 * is on the last bit of the bridge head (frame == TILE_SIZE - 1).
 		 * If we were swapped with such a vehicle, we have set Track::Wormhole,
 		 * when we shouldn't have. Check if this is the case. */
-		TileIndex vt = TileVirtXY(v->x_pos, v->y_pos);
+		TileIndex vt = TileVirtXY(v->GetPos().x_pos, v->GetPos().y_pos);
 		if (IsTileType(vt, TileType::TunnelBridge)) {
-			VehicleEnterTile(v, vt, v->x_pos, v->y_pos);
+			VehicleEnterTile(v, vt, v->GetPos().x_pos, v->GetPos().y_pos);
 			if (v->track != Track::Wormhole && IsBridgeTile(v->tile)) {
 				/* We have just left the wormhole, possibly set the
 				 * "goingdown" bit. UpdateInclination() can be used
@@ -1693,11 +1693,11 @@ static void ReverseTrainSwapVeh(Train *v, int l, int r)
 		}
 
 		std::swap(a->track, b->track);
-		std::swap(a->direction, b->direction);
-		std::swap(a->x_pos, b->x_pos);
-		std::swap(a->y_pos, b->y_pos);
+		std::swap(a->GetMutableMotion().direction, b->GetMutableMotion().direction);
+		std::swap(a->GetMutablePos().x_pos, b->GetMutablePos().x_pos);
+		std::swap(a->GetMutablePos().y_pos, b->GetMutablePos().y_pos);
 		std::swap(a->tile,  b->tile);
-		std::swap(a->z_pos, b->z_pos);
+		std::swap(a->GetMutablePos().z_pos, b->GetMutablePos().z_pos);
 
 		SwapTrainFlags(&a->gv_flags, &b->gv_flags);
 	} else {
@@ -2172,10 +2172,10 @@ CommandCost CmdReverseTrainDirection(DoCommandFlags flags, VehicleID veh_id, boo
 			v->force_proceed = TFP_NONE;
 			InvalidateWindowData(WindowClass::VehicleView, v->index);
 
-			if (_settings_game.vehicle.train_acceleration_model != AccelerationModel::Original && v->cur_speed != 0) {
+			if (_settings_game.vehicle.train_acceleration_model != AccelerationModel::Original && v->GetMotion().cur_speed != 0) {
 				v->flags.Flip(VehicleRailFlag::Reversing);
 			} else {
-				v->cur_speed = 0;
+				v->GetMutableMotion().cur_speed = 0;
 				v->SetLastSpeed();
 				HideFillingPercent(&v->fill_percent_te_id);
 				ReverseTrainDirection(v);
@@ -2402,10 +2402,10 @@ static bool CheckTrainStayInDepot(Train *v)
 	v->PlayLeaveStationSound();
 	SetWindowClassesDirty(WindowClass::TrainList);
 
-	v->track = AxisToTrack(DiagDirToAxis(DirToDiagDir(v->direction)));
+	v->track = AxisToTrack(DiagDirToAxis(DirToDiagDir(v->GetMotion().direction)));
 
 	v->vehstatus.Reset(VehState::Hidden);
-	v->cur_speed = 0;
+	v->GetMutableMotion().cur_speed = 0;
 
 	v->UpdateViewport(true, true);
 	v->UpdatePosition();
@@ -3153,10 +3153,10 @@ static inline void AffectSpeedByZChange(Train *consist, int z_diff)
 	const AccelerationSlowdownParams *asp = &_accel_slowdown[static_cast<int>(consist->GetAccelerationType())];
 
 	if (z_diff > 0) {
-		consist->cur_speed -= (consist->cur_speed * asp->z_up >> 8);
+		consist->GetMutableMotion().cur_speed -= (consist->GetMotion().cur_speed * asp->z_up >> 8);
 	} else {
-		uint16_t spd = consist->cur_speed + asp->z_down;
-		if (spd <= consist->gcache.cached_max_track_speed) consist->cur_speed = spd;
+		uint16_t spd = consist->GetMotion().cur_speed + asp->z_down;
+		if (spd <= consist->gcache.cached_max_track_speed) consist->GetMutableMotion().cur_speed = spd;
 	}
 }
 
@@ -3275,8 +3275,8 @@ static uint CheckTrainCollision(Vehicle *v, Train *moving_front)
 	/* Do not collide with our own wagons */
 	if (v->First() == moving_front->First()) return 0;
 
-	int x_diff = v->x_pos - moving_front->x_pos;
-	int y_diff = v->y_pos - moving_front->y_pos;
+	int x_diff = v->GetPos().x_pos - moving_front->GetPos().x_pos;
+	int y_diff = v->GetPos().y_pos - moving_front->GetPos().y_pos;
 
 	/* Do fast calculation to check whether trains are not in close vicinity
 	 * and quickly reject trains distant enough for any collision.
@@ -3290,7 +3290,7 @@ static uint CheckTrainCollision(Vehicle *v, Train *moving_front)
 	if (x_diff * x_diff + y_diff * y_diff > min_diff * min_diff) return 0;
 
 	/* Happens when there is a train under bridge next to bridge head */
-	if (abs(v->z_pos - moving_front->z_pos) > 5) return 0;
+	if (abs(v->GetPos().z_pos - moving_front->GetPos().z_pos) > 5) return 0;
 
 	/* Crash both trains. Two statements required to guarantee execution
 	 * order because RandomRange() is involved. */
@@ -3311,7 +3311,7 @@ static bool CheckTrainCollision(Train *moving_front)
 	/* can't collide in depot */
 	if (moving_front->track == Track::Depot) return false;
 
-	assert(moving_front->track == Track::Wormhole || TileVirtXY(moving_front->x_pos, moving_front->y_pos) == moving_front->tile);
+	assert(moving_front->track == Track::Wormhole || TileVirtXY(moving_front->GetPos().x_pos, moving_front->GetPos().y_pos) == moving_front->tile);
 
 	uint num_victims = 0;
 
@@ -3324,7 +3324,7 @@ static bool CheckTrainCollision(Train *moving_front)
 			num_victims += CheckTrainCollision(u, moving_front);
 		}
 	} else {
-		for (Vehicle *u : VehiclesNearTileXY(moving_front->x_pos, moving_front->y_pos, 7)) {
+		for (Vehicle *u : VehiclesNearTileXY(moving_front->GetPos().x_pos, moving_front->GetPos().y_pos, 7)) {
 			num_victims += CheckTrainCollision(u, moving_front);
 		}
 	}
@@ -3364,8 +3364,8 @@ bool TrainController(Train *v, Vehicle *nomove, bool reverse)
 				/* Staying in the old tile */
 				if (v->track == Track::Depot) {
 					/* Inside depot */
-					gp.x = v->x_pos;
-					gp.y = v->y_pos;
+					gp.x = v->GetPos().x_pos;
+					gp.y = v->GetPos().y_pos;
 				} else {
 					/* Not inside depot */
 
@@ -3441,14 +3441,16 @@ bool TrainController(Train *v, Vehicle *nomove, bool reverse)
 						if (first->flags.Test(VehicleRailFlag::Stuck)) return false;
 
 						if (!HasSignalOnTrackdir(gp.new_tile, ReverseTrackdir(i))) {
-							first->cur_speed = 0;
-							first->GetMutableMotion().subspeed = 0;
-							first->progress = 255; // make sure that every bit of acceleration will hit the signal again, so speed stays 0.
+							first->GetMutableMotion().cur_speed = 0;
+							VehicleMotion &motion = first->GetMutableMotion();
+							motion.subspeed = 0;
+							motion.progress = 255; // make sure that every bit of acceleration will hit the signal again, so speed stays 0.
 							if (!_settings_game.pf.reverse_at_signals || ++first->wait_counter < _settings_game.pf.wait_oneway_signal * Ticks::DAY_TICKS * 2) return false;
 						} else if (HasSignalOnTrackdir(gp.new_tile, i)) {
-							first->cur_speed = 0;
-							first->GetMutableMotion().subspeed = 0;
-							first->progress = 255; // make sure that every bit of acceleration will hit the signal again, so speed stays 0.
+							first->GetMutableMotion().cur_speed = 0;
+							VehicleMotion &motion = first->GetMutableMotion();
+							motion.subspeed = 0;
+							motion.progress = 255; // make sure that every bit of acceleration will hit the signal again, so speed stays 0.
 							if (!_settings_game.pf.reverse_at_signals || ++first->wait_counter < _settings_game.pf.wait_twoway_signal * Ticks::DAY_TICKS * 2) {
 								DiagDirection exitdir = TrackdirToExitdir(i);
 								TileIndex o_tile = TileAddByDiagDir(gp.new_tile, exitdir);
@@ -3463,7 +3465,7 @@ bool TrainController(Train *v, Vehicle *nomove, bool reverse)
 										/* not front engine of a train, inside wormhole or depot, crashed */
 										if (!t->IsFrontEngine() || t->track.Any({Track::Wormhole, Track::Depot})) return false;
 
-										if (t->cur_speed > 5 || VehicleExitDir(t->direction, t->track) != exitdir) return false;
+										if (t->GetMotion().cur_speed > 5 || VehicleExitDir(t->GetMotion().direction, t->track) != exitdir) return false;
 
 										return true;
 									})) return false;
@@ -3553,8 +3555,8 @@ bool TrainController(Train *v, Vehicle *nomove, bool reverse)
 				if (chosen_dir != v->GetMovingDirection()) {
 					if (prev == nullptr && _settings_game.vehicle.train_acceleration_model == AccelerationModel::Original) {
 						const AccelerationSlowdownParams *asp = &_accel_slowdown[static_cast<int>(v->GetAccelerationType())];
-						DirDiff diff = DirDifference(v->direction, chosen_dir);
-						v->cur_speed -= (diff == DirDiff::Right45 || diff == DirDiff::Left45 ? asp->small_turn : asp->large_turn) * v->cur_speed >> 8;
+						DirDiff diff = DirDifference(v->GetMotion().direction, chosen_dir);
+						v->GetMutableMotion().cur_speed -= (diff == DirDiff::Right45 || diff == DirDiff::Left45 ? asp->small_turn : asp->large_turn) * v->GetMotion().cur_speed >> 8;
 					}
 					direction_changed = true;
 					v->SetMovingDirection(chosen_dir);
@@ -3589,8 +3591,8 @@ bool TrainController(Train *v, Vehicle *nomove, bool reverse)
 					gp.old_tile = GetOtherTunnelBridgeEnd(gp.old_tile);
 				}
 			} else {
-				v->x_pos = gp.x;
-				v->y_pos = gp.y;
+				v->GetMutablePos().x_pos = gp.x;
+				v->GetMutablePos().y_pos = gp.y;
 				v->UpdatePosition();
 				if (!v->vehstatus.Test(VehState::Hidden)) v->Vehicle::UpdateViewport(true);
 				continue;
@@ -3600,8 +3602,8 @@ bool TrainController(Train *v, Vehicle *nomove, bool reverse)
 		/* update image of train, as well as delta XY */
 		v->UpdateDeltaXY();
 
-		v->x_pos = gp.x;
-		v->y_pos = gp.y;
+		v->GetMutablePos().x_pos = gp.x;
+		v->GetMutablePos().y_pos = gp.y;
 		v->UpdatePosition();
 
 		/* update the Z position of the vehicle */
@@ -3609,7 +3611,7 @@ bool TrainController(Train *v, Vehicle *nomove, bool reverse)
 
 		if (prev == nullptr) {
 			/* This is the first vehicle in the train */
-			AffectSpeedByZChange(first, v->z_pos - old_z);
+			AffectSpeedByZChange(first, v->GetPos().z_pos - old_z);
 		}
 
 		if (update_signals_crossing) {
@@ -3640,7 +3642,7 @@ bool TrainController(Train *v, Vehicle *nomove, bool reverse)
 		}
 
 		/* Do not check on every tick to save some computing time. */
-		if (v->IsMovingFront() && first->tick_counter % _settings_game.pf.path_backoff_interval == 0) CheckNextTrainTile(first);
+		if (v->IsMovingFront() && first->GetMotion().tick_counter % _settings_game.pf.path_backoff_interval == 0) CheckNextTrainTile(first);
 	}
 
 	if (direction_changed) first->tcache.cached_max_curve_speed = first->GetCurveSpeedLimit();
@@ -3654,7 +3656,7 @@ invalid_rail:
 reverse_train_direction:
 	if (reverse) {
 		first->wait_counter = 0;
-		first->cur_speed = 0;
+		first->GetMutableMotion().cur_speed = 0;
 		first->GetMutableMotion().subspeed = 0;
 		ReverseTrainDirection(first);
 	}
@@ -3768,7 +3770,7 @@ static void ChangeTrainDirRandomly(Train *v)
 	do {
 		/* We don't need to twist around vehicles if they're not visible */
 		if (!v->vehstatus.Test(VehState::Hidden)) {
-			v->direction = ChangeDir(v->direction, delta[GB(Random(), 0, 2)]);
+			v->GetMutableMotion().direction = ChangeDir(v->GetMotion().direction, delta[GB(Random(), 0, 2)]);
 			/* Refrain from updating the z position of the vehicle when on
 			 * a bridge, because UpdateInclination() will put the vehicle under
 			 * the bridge in that case */
@@ -3814,9 +3816,9 @@ static bool HandleCrashedTrain(Train *v)
 		} while ((u = u->Next()) != nullptr);
 	}
 
-	if (state <= 240 && !(v->tick_counter & 3)) ChangeTrainDirRandomly(v);
+	if (state <= 240 && !(v->GetMotion().tick_counter & 3)) ChangeTrainDirRandomly(v);
 
-	if (state >= 4440 && !(v->tick_counter & 0x1F)) {
+	if (state >= 4440 && !(v->GetMotion().tick_counter & 0x1F)) {
 		bool ret = v->Next() != nullptr;
 		DeleteLastWagon(v);
 		return ret;
@@ -3842,8 +3844,8 @@ static const uint16_t _breakdown_speeds[16] = {
 static bool TrainApproachingLineEnd(Train *moving_front, bool signal, bool reverse)
 {
 	/* Calc position within the current tile */
-	uint x = moving_front->x_pos & 0xF;
-	uint y = moving_front->y_pos & 0xF;
+	uint x = moving_front->GetPos().x_pos & 0xF;
+	uint y = moving_front->GetPos().y_pos & 0xF;
 
 	Direction vdir = moving_front->GetMovingDirection();
 
@@ -3870,7 +3872,7 @@ static bool TrainApproachingLineEnd(Train *moving_front, bool signal, bool rever
 	uint8_t rounding = moving_front->IsDrivingBackwards() ? 0 : 1;
 	if (!signal && x + (moving_front->gcache.cached_veh_length + rounding) / 2 * (IsDiagonalDirection(vdir) ? 1 : 2) >= TILE_SIZE) {
 		/* we are too near the tile end, reverse now */
-		consist->cur_speed = 0;
+		consist->GetMutableMotion().cur_speed = 0;
 		if (reverse) ReverseTrainDirection(consist);
 		return false;
 	}
@@ -3878,7 +3880,7 @@ static bool TrainApproachingLineEnd(Train *moving_front, bool signal, bool rever
 	/* slow down */
 	consist->vehstatus.Set(VehState::TrainSlowing);
 	uint16_t break_speed = _breakdown_speeds[x & 0xF];
-	if (break_speed < consist->cur_speed) consist->cur_speed = break_speed;
+	if (break_speed < consist->GetMotion().cur_speed) consist->GetMutableMotion().cur_speed = break_speed;
 
 	return true;
 }
@@ -3956,7 +3958,7 @@ static bool TrainCheckIfLineEnds(Train *moving_front, bool reverse)
 		consist->vehstatus.Set(VehState::TrainSlowing);
 
 		uint16_t break_speed = _breakdown_speeds[GB(~t, 4, 4)];
-		if (break_speed < consist->cur_speed) consist->cur_speed = break_speed;
+		if (break_speed < consist->GetMotion().cur_speed) consist->GetMutableMotion().cur_speed = break_speed;
 	} else {
 		consist->vehstatus.Reset(VehState::TrainSlowing);
 	}
@@ -4018,17 +4020,17 @@ static bool TrainLocoHandler(Train *consist, bool mode)
 	/* train is broken down? */
 	if (consist->HandleBreakdown()) return true;
 
-	if (consist->flags.Test(VehicleRailFlag::Reversing) && consist->cur_speed == 0) {
+	if (consist->flags.Test(VehicleRailFlag::Reversing) && consist->GetMotion().cur_speed == 0) {
 		ReverseTrainDirection(consist);
 	}
 
 	/* exit if train is stopped */
-	if (consist->vehstatus.Test(VehState::Stopped) && consist->cur_speed == 0) return true;
+	if (consist->vehstatus.Test(VehState::Stopped) && consist->GetMotion().cur_speed == 0) return true;
 
 	bool valid_order = !consist->current_order.IsType(OT_NOTHING) && consist->current_order.GetType() != OT_CONDITIONAL;
 	if (ProcessOrders(consist) && CheckReverseTrain(consist)) {
 		consist->wait_counter = 0;
-		consist->cur_speed = 0;
+		consist->GetMutableMotion().cur_speed = 0;
 		consist->GetMutableMotion().subspeed = 0;
 		consist->flags.Reset(VehicleRailFlag::LeavingStation);
 		ReverseTrainDirection(consist);
@@ -4096,7 +4098,7 @@ static bool TrainLocoHandler(Train *consist, bool mode)
 	int j = consist->UpdateSpeed();
 
 	/* we need to invalidate the widget if we are stopping from 'Stopping 0 km/h' to 'Stopped' */
-	if (consist->cur_speed == 0 && consist->vehstatus.Test(VehState::Stopped)) {
+	if (consist->GetMotion().cur_speed == 0 && consist->vehstatus.Test(VehState::Stopped)) {
 		/* If we manually stopped, we're not force-proceeding anymore. */
 		consist->force_proceed = TFP_NONE;
 		InvalidateWindowData(WindowClass::VehicleView, consist->index);
@@ -4106,7 +4108,7 @@ static bool TrainLocoHandler(Train *consist, bool mode)
 	int adv_spd = moving_front->GetAdvanceDistance();
 	if (j < adv_spd) {
 		/* if the vehicle has speed 0, update the last_speed field. */
-		if (consist->cur_speed == 0) consist->SetLastSpeed();
+		if (consist->GetMotion().cur_speed == 0) consist->SetLastSpeed();
 	} else {
 		TrainCheckIfLineEnds(moving_front);
 		moving_front = moving_front->GetMovingFront();
@@ -4121,7 +4123,7 @@ static bool TrainLocoHandler(Train *consist, bool mode)
 			adv_spd = moving_front->GetAdvanceDistance();
 
 			/* No more moving this tick */
-			if (j < adv_spd || consist->cur_speed == 0) break;
+			if (j < adv_spd || consist->GetMotion().cur_speed == 0) break;
 
 			OrderType order_type = consist->current_order.GetType();
 			/* Do not skip waypoints (incl. 'via' stations) when passing through at full speed. */
@@ -4141,7 +4143,8 @@ static bool TrainLocoHandler(Train *consist, bool mode)
 		u->UpdateViewport(false, false);
 	}
 
-	if (consist->progress == 0) consist->progress = j; // Save unused spd for next time, if TrainController didn't set progress
+	VehicleMotion &motion = consist->GetMutableMotion();
+	if (motion.progress == 0) motion.progress = j; // Save unused spd for next time, if TrainController didn't set progress
 
 	return true;
 }
@@ -4177,12 +4180,12 @@ Money Train::GetRunningCost() const
  */
 bool Train::Tick()
 {
-	this->tick_counter++;
+	this->GetMutableMotion().tick_counter++;
 
 	if (this->IsFrontEngine()) {
 		PerformanceAccumulator framerate(PerformanceElement::GameLoopTrains);
 
-		if (!this->vehstatus.Test(VehState::Stopped) || this->cur_speed > 0) this->running_ticks++;
+		if (!this->vehstatus.Test(VehState::Stopped) || this->GetMotion().cur_speed > 0) this->running_ticks++;
 
 		this->current_order_time++;
 

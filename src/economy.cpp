@@ -1196,11 +1196,11 @@ CargoPayment::~CargoPayment()
 	}
 
 	if (this->visual_transfer != 0) {
-		ShowFeederIncomeAnimation(moving_front->x_pos, moving_front->y_pos,
-				moving_front->z_pos, this->visual_transfer, -this->visual_profit);
+		ShowFeederIncomeAnimation(moving_front->GetPos().x_pos, moving_front->GetPos().y_pos,
+				moving_front->GetPos().z_pos, this->visual_transfer, -this->visual_profit);
 	} else {
-		ShowCostOrIncomeAnimation(moving_front->x_pos, moving_front->y_pos,
-				moving_front->z_pos, -this->visual_profit);
+		ShowCostOrIncomeAnimation(moving_front->GetPos().x_pos, moving_front->GetPos().y_pos,
+				moving_front->GetPos().z_pos, -this->visual_profit);
 	}
 }
 
@@ -1649,7 +1649,7 @@ static void LoadUnloadVehicle(Vehicle *front)
 	CargoTypes cargo_full{};
 	CargoTypes reservation_left{};
 
-	front->cur_speed = 0;
+	front->GetMutableMotion().cur_speed = 0;
 
 	CargoPayment *payment = front->cargo_payment;
 
@@ -1892,7 +1892,7 @@ static void LoadUnloadVehicle(Vehicle *front)
 		StringID percent_up_down = STR_NULL;
 		int percent = CalcPercentVehicleFilled(front, &percent_up_down);
 		if (front->fill_percent_te_id == INVALID_TE_ID) {
-			front->fill_percent_te_id = ShowFillingPercent(moving_front->x_pos, moving_front->y_pos, moving_front->z_pos + 20, percent, percent_up_down);
+			front->fill_percent_te_id = ShowFillingPercent(moving_front->GetPos().x_pos, moving_front->GetPos().y_pos, moving_front->GetPos().z_pos + 20, percent, percent_up_down);
 		} else {
 			UpdateFillingPercent(front->fill_percent_te_id, percent, percent_up_down);
 		}

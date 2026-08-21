@@ -237,7 +237,7 @@ protected: // These functions should not be called outside acceleration code.
 	 */
 	inline uint16_t GetCurrentSpeed() const
 	{
-		return this->cur_speed / 2;
+		return this->GetMotion().cur_speed / 2;
 	}
 
 	/**
@@ -316,7 +316,7 @@ protected: // These functions should not be called outside acceleration code.
 		while (rv != this) {
 			/* If any previous vehicle has different direction,
 			 * we may be in the middle of reversing. */
-			if (this->direction != rv->direction) return true;
+			if (this->GetMotion().direction != rv->GetMotion().direction) return true;
 			rv = rv->Next();
 		}
 

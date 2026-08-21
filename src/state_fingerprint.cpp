@@ -135,13 +135,13 @@ uint64_t HashVehicles()
 		/* Position and motion, i.e. what the tick loop actually writes. */
 		hasher.Add(v->tile);
 		hasher.Add(v->dest_tile);
-		hasher.Add(v->x_pos);
-		hasher.Add(v->y_pos);
-		hasher.Add(v->z_pos);
-		hasher.Add(v->direction);
-		hasher.Add(v->cur_speed);
+		hasher.Add(v->GetPos().x_pos);
+		hasher.Add(v->GetPos().y_pos);
+		hasher.Add(v->GetPos().z_pos);
+		hasher.Add(v->GetMotion().direction);
+		hasher.Add(v->GetMotion().cur_speed);
 		hasher.Add(v->GetMotion().subspeed);
-		hasher.Add(v->progress);
+		hasher.Add(v->GetMotion().progress);
 		hasher.Add(v->vehstatus);
 
 		/* Load and orders. */
@@ -161,7 +161,7 @@ uint64_t HashVehicles()
 		hasher.Add(v->breakdown_ctr);
 		hasher.Add(v->breakdowns_since_last_service);
 		hasher.Add(v->running_ticks);
-		hasher.Add(v->tick_counter);
+		hasher.Add(v->GetMotion().tick_counter);
 
 		/* Chain structure, by index so the hash ignores the allocator. */
 		AddVehicleRef(hasher, v->Next());

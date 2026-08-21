@@ -299,7 +299,7 @@ protected: // These functions should not be called outside acceleration code.
 	 */
 	inline uint16_t GetCurrentSpeed() const
 	{
-		return this->cur_speed;
+		return this->GetMotion().cur_speed;
 	}
 
 	/**

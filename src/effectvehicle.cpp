@@ -16,6 +16,7 @@
 #include "animated_tile_func.h"
 #include "effectvehicle_func.h"
 #include "effectvehicle_base.h"
+#include "vehicle_components.h"
 
 #include "safeguards.h"
 
@@ -41,16 +42,16 @@ static void ChimneySmokeInit(EffectVehicle *v)
 {
 	uint32_t r = Random();
 	v->sprite_cache.sprite_seq.Set(SPR_CHIMNEY_SMOKE_0 + GB(r, 0, 3));
-	v->progress = GB(r, 16, 3);
+	v->GetMutableMotion().progress = GB(r, 16, 3);
 }
 
 /** Run a single tick of the smoke of a chimney. @copydoc EffectProcs::TickProc */
 static bool ChimneySmokeTick(EffectVehicle *v)
 {
-	if (v->progress > 0) {
-		v->progress--;
+	if (v->GetMotion().progress > 0) {
+		v->GetMutableMotion().progress--;
 	} else {
-		TileIndex tile = TileVirtXY(v->x_pos, v->y_pos);
+		TileIndex tile = TileVirtXY(v->GetPos().x_pos, v->GetPos().y_pos);
 		if (!IsTileType(tile, TileType::Industry)) {
 			delete v;
 			return false;
@@ -59,7 +60,7 @@ static bool ChimneySmokeTick(EffectVehicle *v)
 		if (!IncrementSprite(v, SPR_CHIMNEY_SMOKE_7)) {
 			v->sprite_cache.sprite_seq.Set(SPR_CHIMNEY_SMOKE_0);
 		}
-		v->progress = 7;
+		v->GetMutableMotion().progress = 7;
 		v->UpdatePositionAndViewport();
 	}
 
@@ -70,7 +71,7 @@ static bool ChimneySmokeTick(EffectVehicle *v)
 static void SteamSmokeInit(EffectVehicle *v)
 {
 	v->sprite_cache.sprite_seq.Set(SPR_STEAM_SMOKE_0);
-	v->progress = 12;
+	v->GetMutableMotion().progress = 12;
 }
 
 /** Run a single tick of the smoke of a steam engine. @copydoc EffectProcs::TickProc */
@@ -78,14 +79,14 @@ static bool SteamSmokeTick(EffectVehicle *v)
 {
 	bool moved = false;
 
-	v->progress++;
+	v->GetMutableMotion().progress++;
 
-	if ((v->progress & 7) == 0) {
-		v->z_pos++;
+	if ((v->GetMotion().progress & 7) == 0) {
+		v->GetMutablePos().z_pos++;
 		moved = true;
 	}
 
-	if ((v->progress & 0xF) == 4) {
+	if ((v->GetMotion().progress & 0xF) == 4) {
 		if (!IncrementSprite(v, SPR_STEAM_SMOKE_4)) {
 			delete v;
 			return false;
@@ -102,18 +103,18 @@ static bool SteamSmokeTick(EffectVehicle *v)
 static void DieselSmokeInit(EffectVehicle *v)
 {
 	v->sprite_cache.sprite_seq.Set(SPR_DIESEL_SMOKE_0);
-	v->progress = 0;
+	v->GetMutableMotion().progress = 0;
 }
 
 /** Run a single tick of the smoke of a diesel engine. @copydoc EffectProcs::TickProc */
 static bool DieselSmokeTick(EffectVehicle *v)
 {
-	v->progress++;
+	v->GetMutableMotion().progress++;
 
-	if ((v->progress & 3) == 0) {
-		v->z_pos++;
+	if ((v->GetMotion().progress & 3) == 0) {
+		v->GetMutablePos().z_pos++;
 		v->UpdatePositionAndViewport();
-	} else if ((v->progress & 7) == 1) {
+	} else if ((v->GetMotion().progress & 7) == 1) {
 		if (!IncrementSprite(v, SPR_DIESEL_SMOKE_5)) {
 			delete v;
 			return false;
@@ -128,16 +129,16 @@ static bool DieselSmokeTick(EffectVehicle *v)
 static void ElectricSparkInit(EffectVehicle *v)
 {
 	v->sprite_cache.sprite_seq.Set(SPR_ELECTRIC_SPARK_0);
-	v->progress = 1;
+	v->GetMutableMotion().progress = 1;
 }
 
 /** Run a single tick of the sparks of a train. @copydoc EffectProcs::TickProc */
 static bool ElectricSparkTick(EffectVehicle *v)
 {
-	if (v->progress < 2) {
-		v->progress++;
+	if (v->GetMotion().progress < 2) {
+		v->GetMutableMotion().progress++;
 	} else {
-		v->progress = 0;
+		v->GetMutableMotion().progress = 0;
 
 		if (!IncrementSprite(v, SPR_ELECTRIC_SPARK_5)) {
 			delete v;
@@ -153,7 +154,7 @@ static bool ElectricSparkTick(EffectVehicle *v)
 static void SmokeInit(EffectVehicle *v)
 {
 	v->sprite_cache.sprite_seq.Set(SPR_SMOKE_0);
-	v->progress = 12;
+	v->GetMutableMotion().progress = 12;
 }
 
 /** Run a single tick of some smoke. @copydoc EffectProcs::TickProc */
@@ -161,14 +162,14 @@ static bool SmokeTick(EffectVehicle *v)
 {
 	bool moved = false;
 
-	v->progress++;
+	v->GetMutableMotion().progress++;
 
-	if ((v->progress & 3) == 0) {
-		v->z_pos++;
+	if ((v->GetMotion().progress & 3) == 0) {
+		v->GetMutablePos().z_pos++;
 		moved = true;
 	}
 
-	if ((v->progress & 0xF) == 4) {
+	if ((v->GetMotion().progress & 0xF) == 4) {
 		if (!IncrementSprite(v, SPR_SMOKE_4)) {
 			delete v;
 			return false;
@@ -185,14 +186,14 @@ static bool SmokeTick(EffectVehicle *v)
 static void ExplosionLargeInit(EffectVehicle *v)
 {
 	v->sprite_cache.sprite_seq.Set(SPR_EXPLOSION_LARGE_0);
-	v->progress = 0;
+	v->GetMutableMotion().progress = 0;
 }
 
 /** Run a single tick of a large explosion. @copydoc EffectProcs::TickProc */
 static bool ExplosionLargeTick(EffectVehicle *v)
 {
-	v->progress++;
-	if ((v->progress & 3) == 0) {
+	v->GetMutableMotion().progress++;
+	if ((v->GetMotion().progress & 3) == 0) {
 		if (!IncrementSprite(v, SPR_EXPLOSION_LARGE_F)) {
 			delete v;
 			return false;
@@ -207,14 +208,14 @@ static bool ExplosionLargeTick(EffectVehicle *v)
 static void BreakdownSmokeInit(EffectVehicle *v)
 {
 	v->sprite_cache.sprite_seq.Set(SPR_BREAKDOWN_SMOKE_0);
-	v->progress = 0;
+	v->GetMutableMotion().progress = 0;
 }
 
 /** Run a single tick of the smoke of a broken down vehicle. @copydoc EffectProcs::TickProc */
 static bool BreakdownSmokeTick(EffectVehicle *v)
 {
-	v->progress++;
-	if ((v->progress & 7) == 0) {
+	v->GetMutableMotion().progress++;
+	if ((v->GetMotion().progress & 7) == 0) {
 		if (!IncrementSprite(v, SPR_BREAKDOWN_SMOKE_3)) {
 			v->sprite_cache.sprite_seq.Set(SPR_BREAKDOWN_SMOKE_0);
 		}
@@ -234,14 +235,14 @@ static bool BreakdownSmokeTick(EffectVehicle *v)
 static void ExplosionSmallInit(EffectVehicle *v)
 {
 	v->sprite_cache.sprite_seq.Set(SPR_EXPLOSION_SMALL_0);
-	v->progress = 0;
+	v->GetMutableMotion().progress = 0;
 }
 
 /** Run a single tick of a small explosion. @copydoc EffectProcs::TickProc */
 static bool ExplosionSmallTick(EffectVehicle *v)
 {
-	v->progress++;
-	if ((v->progress & 3) == 0) {
+	v->GetMutableMotion().progress++;
+	if ((v->GetMotion().progress & 3) == 0) {
 		if (!IncrementSprite(v, SPR_EXPLOSION_SMALL_B)) {
 			delete v;
 			return false;
@@ -256,7 +257,7 @@ static bool ExplosionSmallTick(EffectVehicle *v)
 static void BulldozerInit(EffectVehicle *v)
 {
 	v->sprite_cache.sprite_seq.Set(SPR_BULLDOZER_NE);
-	v->progress = 0;
+	v->GetMutableMotion().progress = 0;
 	v->animation_state = 0;
 	v->animation_substate = 0;
 }
@@ -300,14 +301,14 @@ static const Coord2D<int8_t> _inc_by_dir[] = {
 /** Run a single tick of a bulldozer (road works). @copydoc EffectProcs::TickProc */
 static bool BulldozerTick(EffectVehicle *v)
 {
-	v->progress++;
-	if ((v->progress & 7) == 0) {
+	v->GetMutableMotion().progress++;
+	if ((v->GetMotion().progress & 7) == 0) {
 		const BulldozerMovement *b = &_bulldozer_movement[v->animation_state];
 
 		v->sprite_cache.sprite_seq.Set(SPR_BULLDOZER_NE + b->image);
 
-		v->x_pos += _inc_by_dir[b->direction].x;
-		v->y_pos += _inc_by_dir[b->direction].y;
+		v->GetMutablePos().x_pos += _inc_by_dir[b->direction].x;
+		v->GetMutablePos().y_pos += _inc_by_dir[b->direction].y;
 
 		v->animation_substate++;
 		if (v->animation_substate >= b->duration) {
@@ -329,7 +330,7 @@ static void BubbleInit(EffectVehicle *v)
 {
 	v->sprite_cache.sprite_seq.Set(SPR_BUBBLE_GENERATE_0);
 	v->spritenum = 0;
-	v->progress = 0;
+	v->GetMutableMotion().progress = 0;
 }
 
 struct BubbleMovement {
@@ -487,8 +488,8 @@ static bool BubbleTick(EffectVehicle *v)
 {
 	uint anim_state;
 
-	v->progress++;
-	if ((v->progress & 3) != 0) return true;
+	v->GetMutableMotion().progress++;
+	if ((v->GetMotion().progress & 3) != 0) return true;
 
 	if (v->spritenum == 0) {
 		v->sprite_cache.sprite_seq.seq[0].sprite++;
@@ -514,7 +515,7 @@ static bool BubbleTick(EffectVehicle *v)
 	}
 
 	if (b->y == 4 && b->x == 1) {
-		if (v->z_pos > 180 || Chance16I(1, 96, Random())) {
+		if (v->GetPos().z_pos > 180 || Chance16I(1, 96, Random())) {
 			v->spritenum = 5;
 			if (_settings_client.sound.ambient) SndPlayVehicleFx(SND_2F_BUBBLE_GENERATOR_FAIL, v);
 		}
@@ -527,16 +528,16 @@ static bool BubbleTick(EffectVehicle *v)
 		anim_state++;
 		if (_settings_client.sound.ambient) SndPlayVehicleFx(SND_31_BUBBLE_GENERATOR_SUCCESS, v);
 
-		tile = TileVirtXY(v->x_pos, v->y_pos);
+		tile = TileVirtXY(v->GetPos().x_pos, v->GetPos().y_pos);
 		if (IsTileType(tile, TileType::Industry) && GetIndustryGfx(tile) == GFX_BUBBLE_CATCHER) AddAnimatedTile(tile);
 	}
 
 	v->animation_state = anim_state;
 	b = &_bubble_movement[v->spritenum - 1][anim_state];
 
-	v->x_pos += b->x;
-	v->y_pos += b->y;
-	v->z_pos += b->z;
+	v->GetMutablePos().x_pos += b->x;
+	v->GetMutablePos().y_pos += b->y;
+	v->GetMutablePos().z_pos += b->z;
 	v->sprite_cache.sprite_seq.Set(SPR_BUBBLE_0 + b->image);
 
 	v->UpdatePositionAndViewport();
@@ -597,9 +598,9 @@ EffectVehicle *CreateEffectVehicle(int x, int y, int z, EffectVehicleType type)
 
 	EffectVehicle *v = EffectVehicle::Create();
 	v->subtype = type;
-	v->x_pos = x;
-	v->y_pos = y;
-	v->z_pos = z;
+	v->GetMutablePos().x_pos = x;
+	v->GetMutablePos().y_pos = y;
+	v->GetMutablePos().z_pos = z;
 	v->tile = TileIndex{};
 	v->UpdateDeltaXY();
 	v->vehstatus = VehState::Unclickable;
@@ -637,7 +638,7 @@ EffectVehicle *CreateEffectVehicleAbove(int x, int y, int z, EffectVehicleType t
  */
 EffectVehicle *CreateEffectVehicleRel(const Vehicle *v, int x, int y, int z, EffectVehicleType type)
 {
-	return CreateEffectVehicle(v->x_pos + x, v->y_pos + y, v->z_pos + z, type);
+	return CreateEffectVehicle(v->GetPos().x_pos + x, v->GetPos().y_pos + y, v->GetPos().z_pos + z, type);
 }
 
 bool EffectVehicle::Tick()

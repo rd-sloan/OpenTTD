@@ -402,12 +402,12 @@ void AddArticulatedParts(Vehicle *first)
 		}
 
 		/* get common values from first engine */
-		v->direction = first->direction;
+		v->GetMutableMotion().direction = first->GetMotion().direction;
 		v->owner = first->owner;
 		v->tile = first->tile;
-		v->x_pos = first->x_pos;
-		v->y_pos = first->y_pos;
-		v->z_pos = first->z_pos;
+		v->GetMutablePos().x_pos = first->GetPos().x_pos;
+		v->GetMutablePos().y_pos = first->GetPos().y_pos;
+		v->GetMutablePos().z_pos = first->GetPos().z_pos;
 		v->date_of_last_service = first->date_of_last_service;
 		v->date_of_last_service_newgrf = first->date_of_last_service_newgrf;
 		v->build_year = first->build_year;

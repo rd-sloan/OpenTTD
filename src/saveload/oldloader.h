@@ -111,6 +111,15 @@ inline uint32_t ReadUint32(LoadgameState &ls)
 
 /** Load 'type' to offset 'offset' in a struct of type 'base', which must also be given via base in LoadChunk() as real pointer. */
 #define OCL_SVAR(type, base, offset)         { type,                 1, nullptr, [] (void *b) -> void * { return std::addressof(static_cast<base *>(b)->offset); }, nullptr }
+/**
+ * Load 'type' into 'field' of the component returned by Vehicle::'accessor'().
+ *
+ * The counterpart to #OCL_SVAR for fields that have migrated out of #Vehicle and into a
+ * component, where there is no member to take an offset of. #LoadChunk skips entries
+ * whose base is nullptr, so the accessor always has a real vehicle to resolve.
+ * @see saveload/component_sl.h
+ */
+#define OCL_SVAR_COMPONENT(type, accessor, field) { type,             1, nullptr, [] (void *b) -> void * { return std::addressof(static_cast<Vehicle *>(b)->accessor().field); }, nullptr }
 /** Load 'type' to a global var. */
 #define OCL_VAR(type, amount, pointer)       { type,            amount, pointer, nullptr, nullptr }
 /** Every struct must end with this. */

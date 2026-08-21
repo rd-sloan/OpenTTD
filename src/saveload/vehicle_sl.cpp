@@ -182,10 +182,10 @@ void UpdateOldAircraft()
 				continue;
 			}
 
-			AircraftLeaveHangar(a, a->direction); // make airplane visible if it was in a depot for example
+			AircraftLeaveHangar(a, a->GetMotion().direction); // make airplane visible if it was in a depot for example
 			a->vehstatus.Reset(VehState::Stopped); // make airplane moving
 			UpdateAircraftCache(a);
-			a->cur_speed = a->GetVehicleCache().cached_max_speed; // so aircraft don't have zero speed while in air
+			a->GetMutableMotion().cur_speed = a->GetVehicleCache().cached_max_speed; // so aircraft don't have zero speed while in air
 			if (!a->current_order.IsType(OT_GOTO_STATION) && !a->current_order.IsType(OT_GOTO_DEPOT)) {
 				/* reset current order so aircraft doesn't have invalid "station-only" order */
 				a->current_order.MakeDummy();
@@ -196,10 +196,10 @@ void UpdateOldAircraft()
 			a->tile = TileIndex{}; // aircraft in air is tile=0
 
 			/* correct speed of helicopter-rotors */
-			if (a->subtype == AIR_HELICOPTER) a->Next()->Next()->cur_speed = 32;
+			if (a->subtype == AIR_HELICOPTER) a->Next()->Next()->GetMutableMotion().cur_speed = 32;
 
 			/* set new position x,y,z */
-			GetAircraftFlightLevelBounds(a, &a->z_pos, nullptr);
+			GetAircraftFlightLevelBounds(a, &a->GetMutablePos().z_pos, nullptr);
 			SetAircraftPosition(a, gp.x, gp.y, GetAircraftFlightLevel(a));
 		}
 	}
@@ -395,17 +395,17 @@ void AfterLoadVehiclesPhase1(bool part_of_load)
 		if (IsSavegameVersionBefore(SaveLoadVersion::ShipRotation)) {
 			/* Ship rotation added */
 			for (Ship *s : Ship::Iterate()) {
-				s->rotation = s->direction;
+				s->rotation = s->GetMotion().direction;
 			}
 		} else {
 			for (Ship *s : Ship::Iterate()) {
-				if (s->rotation == s->direction) continue;
+				if (s->rotation == s->GetMotion().direction) continue;
 				/* In case we are rotating on gameload, set the rotation position to
 				 * the current position, otherwise the applied workaround offset would
 				 * be with respect to 0,0.
 				 */
-				s->rotation_x_pos = s->x_pos;
-				s->rotation_y_pos = s->y_pos;
+				s->rotation_x_pos = s->GetPos().x_pos;
+				s->rotation_y_pos = s->GetPos().y_pos;
 			}
 		}
 
@@ -446,7 +446,7 @@ void AfterLoadVehiclesPhase2(bool part_of_load)
 			case VehicleType::Train: {
 				Train *t = Train::From(v);
 				if (t->IsFrontEngine() || t->IsFreeWagon()) {
-					t->gcache.last_speed = t->cur_speed; // update displayed train speed
+					t->gcache.last_speed = t->GetMotion().cur_speed; // update displayed train speed
 					t->ConsistChanged(CCF_SAVELOAD);
 				}
 				break;
@@ -455,7 +455,7 @@ void AfterLoadVehiclesPhase2(bool part_of_load)
 			case VehicleType::Road: {
 				RoadVehicle *rv = RoadVehicle::From(v);
 				if (rv->IsFrontEngine()) {
-					rv->gcache.last_speed = rv->cur_speed; // update displayed road vehicle speed
+					rv->gcache.last_speed = rv->GetMotion().cur_speed; // update displayed road vehicle speed
 
 					rv->roadtype = Engine::Get(rv->engine_type)->VehInfo<RoadVehicleInfo>().roadtype;
 					rv->compatible_roadtypes = GetRoadTypeInfo(rv->roadtype)->powered_roadtypes;
@@ -491,13 +491,13 @@ void AfterLoadVehiclesPhase2(bool part_of_load)
 					if (t->IsEngine()) t->vehstatus.Set(VehState::Stopped);
 					/* cur_speed is now relevant for non-front parts - nonzero breaks
 					 * moving-wagons-inside-depot- and autoreplace- code */
-					t->cur_speed = 0;
+					t->GetMutableMotion().cur_speed = 0;
 				}
 			}
 			/* trains weren't stopping gradually in old OTTD versions (and TTO/TTD)
 			 * other vehicle types didn't have zero speed while stopped (even in 'recent' OTTD versions) */
 			if (v->vehstatus.Test(VehState::Stopped) && (v->type != VehicleType::Train || IsSavegameVersionBefore(SaveLoadVersion::VehicleCurrencyStationChanges, 1))) {
-				v->cur_speed = 0;
+				v->GetMutableMotion().cur_speed = 0;
 			}
 		}
 	}
@@ -507,12 +507,12 @@ void AfterLoadVehiclesPhase2(bool part_of_load)
 			case VehicleType::Road:
 			case VehicleType::Train:
 			case VehicleType::Ship:
-				v->GetImage(v->direction, EngineImageType::OnMap, &v->sprite_cache.sprite_seq);
+				v->GetImage(v->GetMotion().direction, EngineImageType::OnMap, &v->sprite_cache.sprite_seq);
 				break;
 
 			case VehicleType::Aircraft:
 				if (Aircraft::From(v)->IsNormalAircraft()) {
-					v->GetImage(v->direction, EngineImageType::OnMap, &v->sprite_cache.sprite_seq);
+					v->GetImage(v->GetMotion().direction, EngineImageType::OnMap, &v->sprite_cache.sprite_seq);
 
 					/* The aircraft's shadow will have the same image as the aircraft, but no colour */
 					Vehicle *shadow = v->Next();
@@ -671,21 +671,21 @@ public:
 		SLE_CONDVAR(Vehicle, dest_tile, VarFileType::U16 | VarMemType::U32, SaveLoadVersion::MinVersion, SaveLoadVersion::MultipleRoadStops),
 		SLE_CONDVAR(Vehicle, dest_tile, VarTypes::U32, SaveLoadVersion::MultipleRoadStops, SaveLoadVersion::MaxVersion),
 
-		SLE_CONDVAR(Vehicle, x_pos, VarFileType::U16 | VarMemType::I32, SaveLoadVersion::MinVersion, SaveLoadVersion::MultipleRoadStops),
-		SLE_CONDVAR(Vehicle, x_pos, VarFileType::U32 | VarMemType::I32, SaveLoadVersion::MultipleRoadStops, SaveLoadVersion::MaxVersion),
-		SLE_CONDVAR(Vehicle, y_pos, VarFileType::U16 | VarMemType::I32, SaveLoadVersion::MinVersion, SaveLoadVersion::MultipleRoadStops),
-		SLE_CONDVAR(Vehicle, y_pos, VarFileType::U32 | VarMemType::I32, SaveLoadVersion::MultipleRoadStops, SaveLoadVersion::MaxVersion),
-		SLE_CONDVAR(Vehicle, z_pos, VarFileType::U8 | VarMemType::I32, SaveLoadVersion::MinVersion, SaveLoadVersion::VehicleCentreAndZPos),
-		SLE_CONDVAR(Vehicle, z_pos, VarTypes::I32, SaveLoadVersion::VehicleCentreAndZPos, SaveLoadVersion::MaxVersion),
-		    SLE_VAR(Vehicle, direction,             VarTypes::U8),
+		SLE_CONDVAR_COMPONENT(Vehicle, VehiclePosition, x_pos, VarFileType::U16 | VarMemType::I32, SaveLoadVersion::MinVersion, SaveLoadVersion::MultipleRoadStops),
+		SLE_CONDVAR_COMPONENT(Vehicle, VehiclePosition, x_pos, VarFileType::U32 | VarMemType::I32, SaveLoadVersion::MultipleRoadStops, SaveLoadVersion::MaxVersion),
+		SLE_CONDVAR_COMPONENT(Vehicle, VehiclePosition, y_pos, VarFileType::U16 | VarMemType::I32, SaveLoadVersion::MinVersion, SaveLoadVersion::MultipleRoadStops),
+		SLE_CONDVAR_COMPONENT(Vehicle, VehiclePosition, y_pos, VarFileType::U32 | VarMemType::I32, SaveLoadVersion::MultipleRoadStops, SaveLoadVersion::MaxVersion),
+		SLE_CONDVAR_COMPONENT(Vehicle, VehiclePosition, z_pos, VarFileType::U8 | VarMemType::I32, SaveLoadVersion::MinVersion, SaveLoadVersion::VehicleCentreAndZPos),
+		SLE_CONDVAR_COMPONENT(Vehicle, VehiclePosition, z_pos, VarTypes::I32, SaveLoadVersion::VehicleCentreAndZPos, SaveLoadVersion::MaxVersion),
+		SLE_VAR_COMPONENT(Vehicle, VehicleMotion, direction, VarTypes::U8),
 
 		    SLE_VAR(Vehicle, spritenum,             VarTypes::U8),
 		    SLE_VAR(Vehicle, engine_type,           VarTypes::U16),
-		    SLE_VAR(Vehicle, cur_speed,             VarTypes::U16),
+		SLE_VAR_COMPONENT(Vehicle, VehicleMotion, cur_speed, VarTypes::U16),
 		SLE_VAR_COMPONENT(Vehicle, VehicleMotion, subspeed, VarTypes::U8),
 		    SLE_VAR(Vehicle, acceleration,          VarTypes::U8),
 		SLE_CONDVAR_COMPONENT(Vehicle, VehicleMotion, motion_counter, VarTypes::U32, SaveLoadVersion::VehMotionCounter, SaveLoadVersion::MaxVersion),
-		    SLE_VAR(Vehicle, progress,              VarTypes::U8),
+		SLE_VAR_COMPONENT(Vehicle, VehicleMotion, progress, VarTypes::U8),
 
 		    SLE_VAR(Vehicle, vehstatus,             VarTypes::U8),
 		SLE_CONDVAR(Vehicle, last_station_visited, VarFileType::U8 | VarMemType::U16, SaveLoadVersion::MinVersion, SaveLoadVersion::BigMap),
@@ -706,7 +706,7 @@ public:
 		SLE_CONDVAR(Vehicle, cargo_age_counter, VarTypes::U16, SaveLoadVersion::NewGRFCustomCargoAging, SaveLoadVersion::MaxVersion),
 
 		    SLE_VAR(Vehicle, day_counter,           VarTypes::U8),
-		    SLE_VAR(Vehicle, tick_counter,          VarTypes::U8),
+		SLE_VAR_COMPONENT(Vehicle, VehicleMotion, tick_counter, VarTypes::U8),
 		SLE_CONDVAR(Vehicle, running_ticks, VarTypes::U8, SaveLoadVersion::FractionProfitRunningTicks, SaveLoadVersion::MaxVersion),
 
 		    SLE_VAR(Vehicle, cur_implicit_order_index,  VarTypes::U8),
@@ -1012,15 +1012,15 @@ public:
 		 SLE_CONDVAR(Vehicle, tile, VarFileType::U16 | VarMemType::U32, SaveLoadVersion::MinVersion, SaveLoadVersion::MultipleRoadStops),
 		 SLE_CONDVAR(Vehicle, tile, VarTypes::U32, SaveLoadVersion::MultipleRoadStops, SaveLoadVersion::MaxVersion),
 
-		 SLE_CONDVAR(Vehicle, x_pos, VarFileType::I16 | VarMemType::I32, SaveLoadVersion::MinVersion, SaveLoadVersion::MultipleRoadStops),
-		 SLE_CONDVAR(Vehicle, x_pos, VarTypes::I32, SaveLoadVersion::MultipleRoadStops, SaveLoadVersion::MaxVersion),
-		 SLE_CONDVAR(Vehicle, y_pos, VarFileType::I16 | VarMemType::I32, SaveLoadVersion::MinVersion, SaveLoadVersion::MultipleRoadStops),
-		 SLE_CONDVAR(Vehicle, y_pos, VarTypes::I32, SaveLoadVersion::MultipleRoadStops, SaveLoadVersion::MaxVersion),
-		 SLE_CONDVAR(Vehicle, z_pos, VarFileType::U8 | VarMemType::I32, SaveLoadVersion::MinVersion, SaveLoadVersion::VehicleCentreAndZPos),
-		 SLE_CONDVAR(Vehicle, z_pos, VarTypes::I32, SaveLoadVersion::VehicleCentreAndZPos, SaveLoadVersion::MaxVersion),
+		 SLE_CONDVAR_COMPONENT(Vehicle, VehiclePosition, x_pos, VarFileType::I16 | VarMemType::I32, SaveLoadVersion::MinVersion, SaveLoadVersion::MultipleRoadStops),
+		 SLE_CONDVAR_COMPONENT(Vehicle, VehiclePosition, x_pos, VarTypes::I32, SaveLoadVersion::MultipleRoadStops, SaveLoadVersion::MaxVersion),
+		 SLE_CONDVAR_COMPONENT(Vehicle, VehiclePosition, y_pos, VarFileType::I16 | VarMemType::I32, SaveLoadVersion::MinVersion, SaveLoadVersion::MultipleRoadStops),
+		 SLE_CONDVAR_COMPONENT(Vehicle, VehiclePosition, y_pos, VarTypes::I32, SaveLoadVersion::MultipleRoadStops, SaveLoadVersion::MaxVersion),
+		 SLE_CONDVAR_COMPONENT(Vehicle, VehiclePosition, z_pos, VarFileType::U8 | VarMemType::I32, SaveLoadVersion::MinVersion, SaveLoadVersion::VehicleCentreAndZPos),
+		 SLE_CONDVAR_COMPONENT(Vehicle, VehiclePosition, z_pos, VarTypes::I32, SaveLoadVersion::VehicleCentreAndZPos, SaveLoadVersion::MaxVersion),
 
 		     SLE_VAR(Vehicle, sprite_cache.sprite_seq.seq[0].sprite, VarFileType::U16 | VarMemType::U32),
-		     SLE_VAR(Vehicle, progress,              VarTypes::U8),
+		SLE_VAR_COMPONENT(Vehicle, VehicleMotion, progress, VarTypes::U8),
 		     SLE_VAR(Vehicle, vehstatus,             VarTypes::U8),
 
 		     SLE_VAR(EffectVehicle, animation_state,    VarTypes::U16),
@@ -1060,13 +1060,13 @@ public:
 		SLE_CONDVAR(Vehicle, dest_tile, VarFileType::U16 | VarMemType::U32, SaveLoadVersion::MinVersion, SaveLoadVersion::MultipleRoadStops),
 		SLE_CONDVAR(Vehicle, dest_tile, VarTypes::U32, SaveLoadVersion::MultipleRoadStops, SaveLoadVersion::MaxVersion),
 
-		SLE_CONDVAR(Vehicle, x_pos, VarFileType::I16 | VarMemType::I32, SaveLoadVersion::MinVersion, SaveLoadVersion::MultipleRoadStops),
-		SLE_CONDVAR(Vehicle, x_pos, VarTypes::I32, SaveLoadVersion::MultipleRoadStops, SaveLoadVersion::MaxVersion),
-		SLE_CONDVAR(Vehicle, y_pos, VarFileType::I16 | VarMemType::I32, SaveLoadVersion::MinVersion, SaveLoadVersion::MultipleRoadStops),
-		SLE_CONDVAR(Vehicle, y_pos, VarTypes::I32, SaveLoadVersion::MultipleRoadStops, SaveLoadVersion::MaxVersion),
-		SLE_CONDVAR(Vehicle, z_pos, VarFileType::U8 | VarMemType::I32, SaveLoadVersion::MinVersion, SaveLoadVersion::VehicleCentreAndZPos),
-		SLE_CONDVAR(Vehicle, z_pos, VarTypes::I32, SaveLoadVersion::VehicleCentreAndZPos, SaveLoadVersion::MaxVersion),
-		    SLE_VAR(Vehicle, direction,             VarTypes::U8),
+		SLE_CONDVAR_COMPONENT(Vehicle, VehiclePosition, x_pos, VarFileType::I16 | VarMemType::I32, SaveLoadVersion::MinVersion, SaveLoadVersion::MultipleRoadStops),
+		SLE_CONDVAR_COMPONENT(Vehicle, VehiclePosition, x_pos, VarTypes::I32, SaveLoadVersion::MultipleRoadStops, SaveLoadVersion::MaxVersion),
+		SLE_CONDVAR_COMPONENT(Vehicle, VehiclePosition, y_pos, VarFileType::I16 | VarMemType::I32, SaveLoadVersion::MinVersion, SaveLoadVersion::MultipleRoadStops),
+		SLE_CONDVAR_COMPONENT(Vehicle, VehiclePosition, y_pos, VarTypes::I32, SaveLoadVersion::MultipleRoadStops, SaveLoadVersion::MaxVersion),
+		SLE_CONDVAR_COMPONENT(Vehicle, VehiclePosition, z_pos, VarFileType::U8 | VarMemType::I32, SaveLoadVersion::MinVersion, SaveLoadVersion::VehicleCentreAndZPos),
+		SLE_CONDVAR_COMPONENT(Vehicle, VehiclePosition, z_pos, VarTypes::I32, SaveLoadVersion::VehicleCentreAndZPos, SaveLoadVersion::MaxVersion),
+		SLE_VAR_COMPONENT(Vehicle, VehicleMotion, direction, VarTypes::U8),
 
 		    SLE_VAR(Vehicle, owner,                 VarTypes::U8),
 		    SLE_VAR(Vehicle, vehstatus,             VarTypes::U8),
@@ -1077,7 +1077,7 @@ public:
 		    SLE_VAR(Vehicle, sprite_cache.sprite_seq.seq[0].sprite, VarFileType::U16 | VarMemType::U32),
 		SLE_CONDVAR(Vehicle, age, VarFileType::U16 | VarMemType::I32, SaveLoadVersion::MinVersion, SaveLoadVersion::BigDates),
 		SLE_CONDVAR(Vehicle, age, VarTypes::I32, SaveLoadVersion::BigDates, SaveLoadVersion::MaxVersion),
-		    SLE_VAR(Vehicle, tick_counter,          VarTypes::U8),
+		SLE_VAR_COMPONENT(Vehicle, VehicleMotion, tick_counter, VarTypes::U8),
 
 		SLE_CONDVAR(DisasterVehicle, image_override, VarFileType::U16 | VarMemType::U32, SaveLoadVersion::MinVersion, SaveLoadVersion::LinkgraphLocationDisasterStore),
 		SLE_CONDVAR(DisasterVehicle, image_override, VarTypes::U32, SaveLoadVersion::LinkgraphLocationDisasterStore, SaveLoadVersion::MaxVersion),

@@ -298,10 +298,10 @@ Trackdir Ship::GetVehicleTrackdir() const
 
 	if (this->state == Track::Wormhole) {
 		/* ship on aqueduct, so just use its direction and assume a diagonal track */
-		return DiagDirToDiagTrackdir(DirToDiagDir(this->direction));
+		return DiagDirToDiagTrackdir(DirToDiagDir(this->GetMotion().direction));
 	}
 
-	return TrackDirectionToTrackdir(FindFirstTrack(this->state), this->direction);
+	return TrackDirectionToTrackdir(FindFirstTrack(this->state), this->GetMotion().direction);
 }
 
 void Ship::MarkDirty()
@@ -345,13 +345,13 @@ void Ship::UpdateDeltaXY()
 
 	this->bounds = ship_bounds[this->rotation];
 
-	if (this->direction != this->rotation) {
+	if (this->GetMotion().direction != this->rotation) {
 		/* If we are rotating, then it is possible the ship was moved to its next position. In that
 		 * case, because we are still showing the old direction, the ship will appear to glitch sideways
 		 * slightly. We can work around this by applying an additional offset to make the ship appear
 		 * where it was before it moved. */
-		this->bounds.origin.x -= this->x_pos - this->rotation_x_pos;
-		this->bounds.origin.y -= this->y_pos - this->rotation_y_pos;
+		this->bounds.origin.x -= this->GetPos().x_pos - this->rotation_x_pos;
+		this->bounds.origin.y -= this->GetPos().y_pos - this->rotation_y_pos;
 	}
 }
 
@@ -386,17 +386,17 @@ static bool CheckShipStayInDepot(Ship *v)
 	/* Don't leave depot if another vehicle is already entering/leaving */
 	/* This helps avoid CPU load if many ships are set to start at the same time */
 	if (HasVehicleOnTile(v->tile, [](const Vehicle *u) {
-			return u->type == VehicleType::Ship && u->cur_speed != 0;
+			return u->type == VehicleType::Ship && u->GetMotion().cur_speed != 0;
 		})) return true;
 
 	assert(v->GetVehicleTrackdir() == Trackdir::X_NE || v->GetVehicleTrackdir() == Trackdir::Y_NW);
-	v->direction = DiagDirToDir(TrackdirToExitdir(v->GetVehicleTrackdir()));
-	if (CheckReverseShip(v)) v->direction = ReverseDir(v->direction);
+	v->GetMutableMotion().direction = DiagDirToDir(TrackdirToExitdir(v->GetVehicleTrackdir()));
+	if (CheckReverseShip(v)) v->GetMutableMotion().direction = ReverseDir(v->GetMotion().direction);
 
 	v->state = AxisToTrack(GetShipDepotAxis(v->tile));
-	v->rotation = v->direction;
+	v->rotation = v->GetMotion().direction;
 	v->vehstatus.Reset(VehState::Hidden);
-	v->cur_speed = 0;
+	v->GetMutableMotion().cur_speed = 0;
 	v->UpdateViewport(true, true);
 	SetWindowDirty(WindowClass::VehicleDepot, v->tile);
 
@@ -417,20 +417,21 @@ static bool CheckShipStayInDepot(Ship *v)
 static uint ShipAccelerate(Vehicle *v)
 {
 	uint speed;
-	speed = std::min<uint>(v->cur_speed + v->acceleration, v->GetVehicleCache().cached_max_speed);
+	speed = std::min<uint>(v->GetMotion().cur_speed + v->acceleration, v->GetVehicleCache().cached_max_speed);
 	speed = std::min<uint>(speed, v->current_order.GetMaxSpeed() * 2);
 
 	/* updates statusbar only if speed have changed to save CPU time */
-	if (speed != v->cur_speed) {
-		v->cur_speed = speed;
+	if (speed != v->GetMotion().cur_speed) {
+		v->GetMutableMotion().cur_speed = speed;
 		SetWindowWidgetDirty(WindowClass::VehicleView, v->index, WID_VV_START_STOP);
 	}
 
 	const uint advance_speed = v->GetAdvanceSpeed(speed);
-	const uint number_of_steps = (advance_speed + v->progress) / v->GetAdvanceDistance();
-	const uint remainder = (advance_speed + v->progress) % v->GetAdvanceDistance();
+	VehicleMotion &motion = v->GetMutableMotion();
+	const uint number_of_steps = (advance_speed + motion.progress) / v->GetAdvanceDistance();
+	const uint remainder = (advance_speed + motion.progress) % v->GetAdvanceDistance();
 	assert(remainder <= std::numeric_limits<uint8_t>::max());
-	v->progress = static_cast<uint8_t>(remainder);
+	motion.progress = static_cast<uint8_t>(remainder);
 	return number_of_steps;
 }
 
@@ -522,17 +523,17 @@ static int ShipTestUpDownOnLock(const Ship *v)
 	if (!IsTileType(v->tile, TileType::Water) || !IsLock(v->tile) || GetLockPart(v->tile) != LockPart::Middle) return 0;
 
 	/* Must be at the centre of the lock */
-	if ((v->x_pos & 0xF) != 8 || (v->y_pos & 0xF) != 8) return 0;
+	if ((v->GetPos().x_pos & 0xF) != 8 || (v->GetPos().y_pos & 0xF) != 8) return 0;
 
 	DiagDirection diagdir = GetInclinedSlopeDirection(GetTileSlope(v->tile));
 	assert(IsValidDiagDirection(diagdir));
 
-	if (DirToDiagDir(v->direction) == diagdir) {
+	if (DirToDiagDir(v->GetMotion().direction) == diagdir) {
 		/* Move up */
-		return (v->z_pos < GetTileMaxZ(v->tile) * (int)TILE_HEIGHT) ? 1 : 0;
+		return (v->GetPos().z_pos < GetTileMaxZ(v->tile) * (int)TILE_HEIGHT) ? 1 : 0;
 	} else {
 		/* Move down */
-		return (v->z_pos > GetTileZ(v->tile) * (int)TILE_HEIGHT) ? -1 : 0;
+		return (v->GetPos().z_pos > GetTileZ(v->tile) * (int)TILE_HEIGHT) ? -1 : 0;
 	}
 }
 
@@ -547,13 +548,13 @@ static bool ShipMoveUpDownOnLock(Ship *v)
 	int dz = ShipTestUpDownOnLock(v);
 	if (dz == 0) return false;
 
-	if (v->cur_speed != 0) {
-		v->cur_speed = 0;
+	if (v->GetMotion().cur_speed != 0) {
+		v->GetMutableMotion().cur_speed = 0;
 		SetWindowWidgetDirty(WindowClass::VehicleView, v->index, WID_VV_START_STOP);
 	}
 
-	if ((v->tick_counter & 7) == 0) {
-		v->z_pos += dz;
+	if ((v->GetMotion().tick_counter & 7) == 0) {
+		v->GetMutablePos().z_pos += dz;
 		v->UpdatePosition();
 		v->UpdateViewport(true, true);
 	}
@@ -591,14 +592,14 @@ static void ReverseShipIntoTrackdir(Ship *v, Trackdir trackdir)
 		Direction::SW, Direction::NW, Direction::W, Direction::W, Direction::N, Direction::N, Direction::Invalid, Direction::Invalid,
 	};
 
-	v->direction = _trackdir_to_direction[trackdir];
-	assert(v->direction != Direction::Invalid);
+	v->GetMutableMotion().direction = _trackdir_to_direction[trackdir];
+	assert(v->GetMotion().direction != Direction::Invalid);
 	v->state = TrackdirBitsToTrackBits(TrackdirToTrackdirBits(trackdir));
 
 	/* Remember our current location to avoid movement glitch */
-	v->rotation_x_pos = v->x_pos;
-	v->rotation_y_pos = v->y_pos;
-	v->cur_speed = 0;
+	v->rotation_x_pos = v->GetPos().x_pos;
+	v->rotation_y_pos = v->GetPos().y_pos;
+	v->GetMutableMotion().cur_speed = 0;
 	v->path.clear();
 
 	v->UpdatePosition();
@@ -607,12 +608,12 @@ static void ReverseShipIntoTrackdir(Ship *v, Trackdir trackdir)
 
 static void ReverseShip(Ship *v)
 {
-	v->direction = ReverseDir(v->direction);
+	v->GetMutableMotion().direction = ReverseDir(v->GetMotion().direction);
 
 	/* Remember our current location to avoid movement glitch */
-	v->rotation_x_pos = v->x_pos;
-	v->rotation_y_pos = v->y_pos;
-	v->cur_speed = 0;
+	v->rotation_x_pos = v->GetPos().x_pos;
+	v->rotation_y_pos = v->GetPos().y_pos;
+	v->GetMutableMotion().cur_speed = 0;
 	v->path.clear();
 
 	v->UpdatePosition();
@@ -621,7 +622,8 @@ static void ReverseShip(Ship *v)
 
 static void ShipController(Ship *v)
 {
-	v->tick_counter++;
+	VehicleMotion &motion = v->GetMutableMotion();
+	motion.tick_counter++;
 	v->current_order_time++;
 
 	if (v->HandleBreakdown()) return;
@@ -639,9 +641,9 @@ static void ShipController(Ship *v)
 	v->ShowVisualEffect();
 
 	/* Rotating on spot */
-	if (v->direction != v->rotation) {
-		if ((v->tick_counter & 7) == 0) {
-			DirDiff diff = DirDifference(v->direction, v->rotation);
+	if (v->GetMotion().direction != v->rotation) {
+		if ((motion.tick_counter & 7) == 0) {
+			DirDiff diff = DirDifference(v->GetMotion().direction, v->rotation);
 			v->rotation = ChangeDir(v->rotation, LimitDirDiff(diff));
 			/* Invalidate the sprite cache direction to force recalculation of viewport */
 			v->sprite_cache.last_direction = Direction::Invalid;
@@ -662,8 +664,8 @@ static void ShipController(Ship *v)
 			if (gp.old_tile == gp.new_tile) {
 				/* Staying in tile */
 				if (v->IsInDepot()) {
-					gp.x = v->x_pos;
-					gp.y = v->y_pos;
+					gp.x = v->GetPos().x_pos;
+					gp.y = v->GetPos().y_pos;
 				} else {
 					/* Not inside depot */
 					auto vets = VehicleEnterTile(v, gp.new_tile, gp.x, gp.y);
@@ -675,7 +677,7 @@ static void ShipController(Ship *v)
 						v->current_order.Free();
 						SetWindowWidgetDirty(WindowClass::VehicleView, v->index, WID_VV_START_STOP);
 						/* Test if continuing forward would lead to a dead-end, moving into the dock. */
-						const DiagDirection exitdir = VehicleExitDir(v->direction, v->state);
+						const DiagDirection exitdir = VehicleExitDir(v->GetMotion().direction, v->state);
 						const TileIndex tile = TileAddByDiagDir(v->tile, exitdir);
 						if (TrackdirBitsToTrackBits(GetTileTrackStatus(tile, TransportType::Water, RoadTramType::Invalid, exitdir).trackdirs).None()) return ReverseShip(v);
 					} else if (v->dest_tile != INVALID_TILE) {
@@ -744,30 +746,30 @@ static void ShipController(Ship *v)
 				}
 
 				const Direction new_direction = chosen_dir;
-				const DirDiff diff = DirDifference(new_direction, v->direction);
+				const DirDiff diff = DirDifference(new_direction, v->GetMotion().direction);
 				switch (diff) {
 					case DirDiff::Same:
 					case DirDiff::Right45:
 					case DirDiff::Left45:
 						/* Continue at speed */
-						v->rotation = v->direction = new_direction;
+						v->rotation = v->GetMutableMotion().direction = new_direction;
 						break;
 
 					default:
 						/* Stop for rotation */
-						v->cur_speed = 0;
-						v->direction = new_direction;
+						v->GetMutableMotion().cur_speed = 0;
+						v->GetMutableMotion().direction = new_direction;
 						/* Remember our current location to avoid movement glitch */
-						v->rotation_x_pos = v->x_pos;
-						v->rotation_y_pos = v->y_pos;
+						v->rotation_x_pos = v->GetPos().x_pos;
+						v->rotation_y_pos = v->GetPos().y_pos;
 						break;
 				}
 			}
 		} else {
 			/* On a bridge */
 			if (!IsTileType(gp.new_tile, TileType::TunnelBridge) || !VehicleEnterTile(v, gp.new_tile, gp.x, gp.y).Test(VehicleEnterTileState::EnteredWormhole)) {
-				v->x_pos = gp.x;
-				v->y_pos = gp.y;
+				v->GetMutablePos().x_pos = gp.x;
+				v->GetMutablePos().y_pos = gp.y;
 				v->UpdatePosition();
 				if (!v->vehstatus.Test(VehState::Hidden)) v->Vehicle::UpdateViewport(true);
 				continue;
@@ -779,8 +781,8 @@ static void ShipController(Ship *v)
 		}
 
 		/* update image of ship, as well as delta XY */
-		v->x_pos = gp.x;
-		v->y_pos = gp.y;
+		v->GetMutablePos().x_pos = gp.x;
+		v->GetMutablePos().y_pos = gp.y;
 
 		v->UpdatePosition();
 		v->UpdateViewport(true, true);
@@ -829,14 +831,14 @@ CommandCost CmdBuildShip(DoCommandFlags flags, TileIndex tile, const Engine *e, 
 		v->tile = tile;
 		x = TileX(tile) * TILE_SIZE + TILE_SIZE / 2;
 		y = TileY(tile) * TILE_SIZE + TILE_SIZE / 2;
-		v->x_pos = x;
-		v->y_pos = y;
-		v->z_pos = GetSlopePixelZ(x, y);
+		v->GetMutablePos().x_pos = x;
+		v->GetMutablePos().y_pos = y;
+		v->GetMutablePos().z_pos = GetSlopePixelZ(x, y);
 
-		v->direction = DiagDirToDir(GetShipDepotDirection(tile));
+		v->GetMutableMotion().direction = DiagDirToDir(GetShipDepotDirection(tile));
 
 		/* UpdateDeltaXY() requires rotation to be initialised as well. */
-		v->rotation = v->direction;
+		v->rotation = v->GetMotion().direction;
 		v->UpdateDeltaXY();
 
 		v->vehstatus = {VehState::Hidden, VehState::Stopped, VehState::DefaultPalette};

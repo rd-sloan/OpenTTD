@@ -527,7 +527,7 @@ void VehiclesNearTileXY::Iterator::SkipEmptyBuckets()
  */
 void VehiclesNearTileXY::Iterator::SkipFalseMatches()
 {
-	while (this->current_veh != nullptr && !this->pos_rect.Contains({this->current_veh->x_pos, this->current_veh->y_pos})) this->Increment();
+	while (this->current_veh != nullptr && !this->pos_rect.Contains({this->current_veh->GetPos().x_pos, this->current_veh->GetPos().y_pos})) this->Increment();
 }
 
 /**
@@ -573,7 +573,7 @@ CommandCost EnsureNoVehicleOnGround(TileIndex tile)
 	 */
 	for (const Vehicle *v : VehiclesOnTile(tile)) {
 		if (v->type == VehicleType::Disaster || (v->type == VehicleType::Aircraft && v->subtype == AIR_SHADOW)) continue;
-		if (v->z_pos > z) continue;
+		if (v->GetPos().z_pos > z) continue;
 
 		return CommandCost(STR_ERROR_TRAIN_IN_THE_WAY + to_underlying(v->type));
 	}
@@ -758,6 +758,24 @@ const VehicleMotion &Vehicle::GetMotion() const
 VehicleMotion &Vehicle::GetMutableMotion()
 {
 	return GetVehicleRegistry().get<VehicleMotion>(GetVehicleEntity(this->index));
+}
+
+/**
+ * Get this vehicle's world position for reading.
+ * @return The position.
+ */
+const VehiclePosition &Vehicle::GetPos() const
+{
+	return GetVehicleRegistry().get<VehiclePosition>(GetVehicleEntity(this->index));
+}
+
+/**
+ * Get this vehicle's world position for writing.
+ * @return The position.
+ */
+VehiclePosition &Vehicle::GetMutablePos()
+{
+	return GetVehicleRegistry().get<VehiclePosition>(GetVehicleEntity(this->index));
 }
 
 /**
@@ -1139,12 +1157,12 @@ void CallVehicleTicks()
 				if (v->vehstatus.Test(VehState::Hidden)) continue;
 
 				/* Do not play any sound when stopped */
-				if (front->vehstatus.Test(VehState::Stopped) && (front->type != VehicleType::Train || front->cur_speed == 0)) continue;
+				if (front->vehstatus.Test(VehState::Stopped) && (front->type != VehicleType::Train || front->GetMotion().cur_speed == 0)) continue;
 
 				/* Update motion counter for animation purposes. One lookup serves both
 				 * this write and the sound check below. */
 				VehicleMotion &motion = v->GetMutableMotion();
-				motion.motion_counter += front->cur_speed;
+				motion.motion_counter += front->GetMotion().cur_speed;
 
 				/* Check vehicle type specifics */
 				switch (v->type) {
@@ -1165,12 +1183,12 @@ void CallVehicleTicks()
 				}
 
 				/* Play a running sound if the motion counter passes 256 (Do we not skip sounds?) */
-				if (GB(motion.motion_counter, 0, 8) < front->cur_speed) PlayVehicleSound(v, VSE_RUNNING);
+				if (GB(motion.motion_counter, 0, 8) < front->GetMotion().cur_speed) PlayVehicleSound(v, VSE_RUNNING);
 
 				/* Play an alternating running sound every 16 ticks */
-				if (GB(v->tick_counter, 0, 4) == 0) {
+				if (GB(motion.tick_counter, 0, 4) == 0) {
 					/* Play running sound when speed > 0 and not braking */
-					bool running = (front->cur_speed > 0) && !front->vehstatus.Any({VehState::Stopped, VehState::TrainSlowing});
+					bool running = (front->GetMotion().cur_speed > 0) && !front->vehstatus.Any({VehState::Stopped, VehState::TrainSlowing});
 					PlayVehicleSound(v, running ? VSE_RUNNING_16 : VSE_STOPPED_16);
 				}
 
@@ -1190,9 +1208,9 @@ void CallVehicleTicks()
 		if (it.second) v->vehstatus.Reset(VehState::Stopped);
 
 		/* Store the position of the effect as the vehicle pointer will become invalid later */
-		int x = v->x_pos;
-		int y = v->y_pos;
-		int z = v->z_pos;
+		int x = v->GetPos().x_pos;
+		int y = v->GetPos().y_pos;
+		int z = v->GetPos().z_pos;
 
 		const Company *c = Company::Get(_current_company);
 		SubtractMoneyFromCompany(_current_company, CommandCost(ExpensesType::NewVehicles, (Money)c->settings.engine_renew_money));
@@ -1246,7 +1264,7 @@ static void DoDrawVehicle(const Vehicle *v)
 	for (uint i = 0; i < v->sprite_cache.sprite_seq.count; ++i) {
 		PaletteID pal2 = v->sprite_cache.sprite_seq.seq[i].pal;
 		if (!pal2 || v->vehstatus.Test(VehState::Crashed)) pal2 = pal;
-		AddSortableSpriteToDraw(v->sprite_cache.sprite_seq.seq[i].sprite, pal2, v->x_pos, v->y_pos, v->z_pos, v->bounds, shadowed);
+		AddSortableSpriteToDraw(v->sprite_cache.sprite_seq.seq[i].sprite, pal2, v->GetPos().x_pos, v->GetPos().y_pos, v->GetPos().z_pos, v->bounds, shadowed);
 	}
 	EndSpriteCombine();
 }
@@ -1306,7 +1324,7 @@ void ViewportAddVehicles(DrawPixelInfo *dpi)
 					 */
 					if (v->sprite_cache.revalidate_before_draw) {
 						VehicleSpriteSeq seq;
-						v->GetImage(v->direction, EngineImageType::OnMap, &seq);
+						v->GetImage(v->GetMotion().direction, EngineImageType::OnMap, &seq);
 
 						if (seq.IsValid() && v->sprite_cache.sprite_seq != seq) {
 							v->sprite_cache.sprite_seq = seq;
@@ -1447,7 +1465,7 @@ void CheckVehicleBreakdown(Vehicle *v)
 	/* The vehicle is already broken down. */
 	if (v->breakdown_ctr != 0) return;
 	/* The vehicle is stopped or going very slow. */
-	if (v->cur_speed < 5) return;
+	if (v->GetMotion().cur_speed < 5) return;
 	/* The vehicle has been manually stopped. */
 	if (v->vehstatus.Test(VehState::Stopped)) return;
 
@@ -1503,7 +1521,7 @@ bool Vehicle::HandleBreakdown()
 				/* Aircraft just need this flag, the rest is handled elsewhere */
 				this->vehstatus.Set(VehState::AircraftBroken);
 			} else {
-				this->cur_speed = 0;
+				this->GetMutableMotion().cur_speed = 0;
 
 				if (!PlayVehicleSound(this, VSE_BREAKDOWN)) {
 					bool train_or_ship = this->type == VehicleType::Train || this->type == VehicleType::Ship;
@@ -1528,7 +1546,7 @@ bool Vehicle::HandleBreakdown()
 			if (this->type == VehicleType::Aircraft) return false;
 
 			/* For trains this function is called twice per tick, so decrease v->breakdown_delay at half the rate */
-			if ((this->tick_counter & (this->type == VehicleType::Train ? 3 : 1)) == 0) {
+			if ((this->GetMotion().tick_counter & (this->type == VehicleType::Train ? 3 : 1)) == 0) {
 				if (--this->breakdown_delay == 0) {
 					this->breakdown_ctr = 0;
 					this->MarkDirty();
@@ -1718,7 +1736,7 @@ void VehicleEnterDepot(Vehicle *v)
 	SetWindowDirty(WindowClass::VehicleDepot, v->tile);
 
 	v->vehstatus.Set(VehState::Hidden);
-	v->cur_speed = 0;
+	v->GetMutableMotion().cur_speed = 0;
 
 	VehicleServiceInDepot(v);
 
@@ -1756,7 +1774,7 @@ void VehicleEnterDepot(Vehicle *v)
 			} else if (cost.GetCost() != 0) {
 				v->profit_this_year -= cost.GetCost() << 8;
 				if (v->owner == _local_company) {
-					ShowCostOrIncomeAnimation(v->x_pos, v->y_pos, v->z_pos, cost.GetCost());
+					ShowCostOrIncomeAnimation(v->GetPos().x_pos, v->GetPos().y_pos, v->GetPos().z_pos, cost.GetCost());
 				}
 			}
 		}
@@ -1821,7 +1839,7 @@ void Vehicle::UpdateBoundingBoxCoordinates(bool update_cache) const
 	this->sprite_cache.sprite_seq.GetBounds(&new_coord);
 
 	/* z-bounds are not used. */
-	Point pt = RemapCoords(this->x_pos + this->bounds.origin.x + this->bounds.offset.x, this->y_pos + this->bounds.origin.y + this->bounds.offset.y, this->z_pos);
+	Point pt = RemapCoords(this->GetPos().x_pos + this->bounds.origin.x + this->bounds.offset.x, this->GetPos().y_pos + this->bounds.origin.y + this->bounds.offset.y, this->GetPos().z_pos);
 	new_coord.left   += pt.x;
 	new_coord.top    += pt.y;
 	new_coord.right  += pt.x + 2 * ZOOM_BASE;
@@ -1829,9 +1847,9 @@ void Vehicle::UpdateBoundingBoxCoordinates(bool update_cache) const
 
 	extern bool _draw_bounding_boxes;
 	if (_draw_bounding_boxes) {
-		int x = this->x_pos + this->bounds.origin.x;
-		int y = this->y_pos + this->bounds.origin.y;
-		int z = this->z_pos + this->bounds.origin.z;
+		int x = this->GetPos().x_pos + this->bounds.origin.x;
+		int y = this->GetPos().y_pos + this->bounds.origin.y;
+		int z = this->GetPos().z_pos + this->bounds.origin.z;
 		new_coord.left   = std::min(new_coord.left, RemapCoords(x + bounds.extent.x, y, z).x);
 		new_coord.right  = std::max(new_coord.right, RemapCoords(x, y + bounds.extent.y, z).x + 1);
 		new_coord.top    = std::min(new_coord.top, RemapCoords(x, y, z + bounds.extent.z).y);
@@ -1923,8 +1941,8 @@ GetNewVehiclePosResult GetNewVehiclePos(const Vehicle *v)
 	}}};
 
 	const Coord2D<int8_t> &coord = delta_coord[v->GetMovingDirection()];
-	int x = v->x_pos + coord.x;
-	int y = v->y_pos + coord.y;
+	int x = v->GetPos().x_pos + coord.x;
+	int y = v->GetPos().y_pos + coord.y;
 
 	GetNewVehiclePosResult gp;
 	gp.x = x;
@@ -1944,13 +1962,13 @@ Direction GetDirectionTowards(const Vehicle *v, int x, int y)
 {
 	int i = 0;
 
-	if (y >= v->y_pos) {
-		if (y != v->y_pos) i += 3;
+	if (y >= v->GetPos().y_pos) {
+		if (y != v->GetPos().y_pos) i += 3;
 		i += 3;
 	}
 
-	if (x >= v->x_pos) {
-		if (x != v->x_pos) i++;
+	if (x >= v->GetPos().x_pos) {
+		if (x != v->GetPos().x_pos) i++;
 		i++;
 	}
 
@@ -2452,7 +2470,7 @@ void Vehicle::BeginLoading()
 	SetWindowDirty(WindowClass::StationView, this->last_station_visited);
 
 	Station::Get(this->last_station_visited)->MarkTilesDirty(true);
-	this->cur_speed = 0;
+	this->GetMutableMotion().cur_speed = 0;
 	this->MarkDirty();
 }
 
@@ -2887,7 +2905,7 @@ static void SpawnAdvancedVisualEffect(const Vehicle *v)
 		if (v->type == VehicleType::Train) l_center = (VEHICLE_LENGTH - Train::From(v)->gcache.cached_veh_length) / 2;
 	}
 
-	Direction l_dir = v->direction;
+	Direction l_dir = v->GetMotion().direction;
 	if (v->type == VehicleType::Train && Train::From(v)->flags.Test(VehicleRailFlag::Flipped)) l_dir = ReverseDir(l_dir);
 	Direction t_dir = ChangeDir(l_dir, DirDiff::Right90);
 
@@ -2930,7 +2948,7 @@ static bool IsBridgeAboveVehicle(const Vehicle *v)
 	if (IsBridgeTile(v->tile)) {
 		/* If the vehicle is 'on' a bridge tile, check the real position of the vehicle. If it's different then the
 		 * vehicle is on the middle of the bridge, which cannot have a bridge above. */
-		TileIndex tile = TileVirtXY(v->x_pos, v->y_pos);
+		TileIndex tile = TileVirtXY(v->GetPos().x_pos, v->GetPos().y_pos);
 		if (tile != v->tile) return false;
 	}
 	return IsBridgeAbove(v->tile);
@@ -2963,7 +2981,7 @@ void Vehicle::ShowVisualEffect() const
 	 */
 	if (_settings_game.vehicle.smoke_amount == 0 ||
 			this->vehstatus.Any({VehState::TrainSlowing, VehState::Stopped}) ||
-			this->cur_speed < 2) {
+			this->GetMotion().cur_speed < 2) {
 		return;
 	}
 
@@ -2979,7 +2997,7 @@ void Vehicle::ShowVisualEffect() const
 		 */
 		if (t->flags.Test(VehicleRailFlag::Reversing) ||
 				(IsRailStationTile(moving_front->tile) && t->IsFrontEngine() && t->current_order.ShouldStopAtStation(t, GetStationIndex(moving_front->tile)) &&
-				t->cur_speed >= max_speed)) {
+				t->GetMotion().cur_speed >= max_speed)) {
 			return;
 		}
 	}
@@ -2988,6 +3006,7 @@ void Vehicle::ShowVisualEffect() const
 
 	do {
 		const uint8_t cached_vis_effect = v->GetVehicleCache().cached_vis_effect;
+		const uint8_t tick_counter = v->GetMotion().tick_counter;
 		bool advanced = HasBit(cached_vis_effect, VE_ADVANCED_EFFECT);
 		int effect_offset = GB(cached_vis_effect, VE_OFFSET_START, VE_OFFSET_COUNT) - VE_OFFSET_CENTRE;
 		VisualEffectSpawnModel effect_model = VisualEffectSpawnModel::None;
@@ -3028,7 +3047,7 @@ void Vehicle::ShowVisualEffect() const
 				 * third of its maximum speed spectrum. Steam emission finally normalises at very close to vehicle's maximum speed.
 				 * REGULATION:
 				 * - instead of 1, 4 / 2^smoke_amount (max. 2) is used to provide sufficient regulation to steam puffs' amount. */
-				if (GB(v->tick_counter, 0, ((4 >> _settings_game.vehicle.smoke_amount) + ((this->cur_speed * 3) / max_speed))) == 0) {
+				if (GB(tick_counter, 0, ((4 >> _settings_game.vehicle.smoke_amount) + ((this->GetMotion().cur_speed * 3) / max_speed))) == 0) {
 					evt = EV_STEAM_SMOKE;
 				}
 				break;
@@ -3049,8 +3068,8 @@ void Vehicle::ShowVisualEffect() const
 				if (v->type == VehicleType::Train) {
 					power_weight_effect = (32 >> (Train::From(this)->gcache.cached_power >> 10)) - (32 >> (Train::From(this)->gcache.cached_weight >> 9));
 				}
-				if (this->cur_speed < (max_speed >> (2 >> _settings_game.vehicle.smoke_amount)) &&
-						Chance16((64 - ((this->cur_speed << 5) / max_speed) + power_weight_effect), (512 >> _settings_game.vehicle.smoke_amount))) {
+				if (this->GetMotion().cur_speed < (max_speed >> (2 >> _settings_game.vehicle.smoke_amount)) &&
+						Chance16((64 - ((this->GetMotion().cur_speed << 5) / max_speed) + power_weight_effect), (512 >> _settings_game.vehicle.smoke_amount))) {
 					evt = EV_DIESEL_SMOKE;
 				}
 				break;
@@ -3063,8 +3082,8 @@ void Vehicle::ShowVisualEffect() const
 				 * reaching its max. speed, quarter by quarter of it, chance decreases until the usual 2,22% at train's top speed.
 				 * REGULATION:
 				 * - in Chance16 the last value is 360 / 2^smoke_amount (max. sparks when 90 = smoke_amount of 2). */
-				if (GB(v->tick_counter, 0, 2) == 0 &&
-						Chance16((6 - ((this->cur_speed << 2) / max_speed)), (360 >> _settings_game.vehicle.smoke_amount))) {
+				if (GB(tick_counter, 0, 2) == 0 &&
+						Chance16((6 - ((this->GetMotion().cur_speed << 2) / max_speed)), (360 >> _settings_game.vehicle.smoke_amount))) {
 					evt = EV_ELECTRIC_SPARK;
 				}
 				break;
@@ -3084,8 +3103,8 @@ void Vehicle::ShowVisualEffect() const
 			 * correction factor. */
 			if (v->type == VehicleType::Train) effect_offset += (VEHICLE_LENGTH - Train::From(v)->gcache.cached_veh_length) / 2;
 
-			int x = _vehicle_smoke_pos[v->direction] * effect_offset;
-			int y = _vehicle_smoke_pos[ChangeDir(v->direction, DirDiff::Right90)] * effect_offset;
+			int x = _vehicle_smoke_pos[v->GetMotion().direction] * effect_offset;
+			int y = _vehicle_smoke_pos[ChangeDir(v->GetMotion().direction, DirDiff::Right90)] * effect_offset;
 
 			if (v->type == VehicleType::Train && Train::From(v)->flags.Test(VehicleRailFlag::Flipped)) {
 				x = -x;

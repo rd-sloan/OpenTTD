@@ -311,7 +311,7 @@ public:
 			return path_found && best_origin_dir == reverse_dir;
 		} else {
 			/* This gets called when a ship suddenly can't move forward, e.g. due to terraforming. */
-			const DiagDirection entry = ReverseDiagDir(VehicleExitDir(v->direction, v->state));
+			const DiagDirection entry = ReverseDiagDir(VehicleExitDir(v->GetMotion().direction, v->state));
 			const TrackdirBits reverse_dirs = DiagdirReachesTrackdirs(entry) & GetTileTrackStatus(v->tile, TransportType::Water, RoadTramType::Invalid, entry).trackdirs;
 			(void)ChooseShipTrack(v, v->tile, {}, reverse_dirs, path_found, dummy_cache, best_origin_dir);
 			*trackdir = path_found && best_origin_dir != Trackdir::Invalid ? best_origin_dir : GetRandomTrackdir(reverse_dirs);

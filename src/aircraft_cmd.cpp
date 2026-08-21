@@ -123,7 +123,7 @@ static StationID FindNearestHangar(const Aircraft *v)
 {
 	uint best = 0;
 	StationID index = StationID::Invalid();
-	TileIndex vtile = TileVirtXYClampedToMap(v->x_pos, v->y_pos);
+	TileIndex vtile = TileVirtXYClampedToMap(v->GetPos().x_pos, v->GetPos().y_pos);
 	const AircraftVehicleInfo *avi = AircraftVehInfo(v->engine_type);
 	uint max_range = v->acache.cached_max_range_sqr;
 
@@ -284,7 +284,7 @@ CommandCost CmdBuildAircraft(DoCommandFlags flags, TileIndex tile, const Engine 
 		Aircraft *u = Aircraft::Create(); // shadow
 		*ret = v;
 
-		v->direction = Direction::SE;
+		v->GetMutableMotion().direction = Direction::SE;
 
 		v->owner = u->owner = _current_company;
 
@@ -293,11 +293,11 @@ CommandCost CmdBuildAircraft(DoCommandFlags flags, TileIndex tile, const Engine 
 		uint x = TileX(tile) * TILE_SIZE + 5;
 		uint y = TileY(tile) * TILE_SIZE + 3;
 
-		v->x_pos = u->x_pos = x;
-		v->y_pos = u->y_pos = y;
+		v->GetMutablePos().x_pos = u->GetMutablePos().x_pos = x;
+		v->GetMutablePos().y_pos = u->GetMutablePos().y_pos = y;
 
-		u->z_pos = GetSlopePixelZ(x, y);
-		v->z_pos = u->z_pos + 1;
+		u->GetMutablePos().z_pos = GetSlopePixelZ(x, y);
+		v->GetMutablePos().z_pos = u->GetPos().z_pos + 1;
 
 		v->vehstatus = {VehState::Hidden, VehState::Stopped, VehState::DefaultPalette};
 		u->vehstatus = {VehState::Hidden, VehState::Unclickable, VehState::Shadow};
@@ -373,11 +373,11 @@ CommandCost CmdBuildAircraft(DoCommandFlags flags, TileIndex tile, const Engine 
 		if (v->subtype == AIR_HELICOPTER) {
 			Aircraft *w = Aircraft::Create();
 			w->engine_type = e->index;
-			w->direction = Direction::N;
+			w->GetMutableMotion().direction = Direction::N;
 			w->owner = _current_company;
-			w->x_pos = v->x_pos;
-			w->y_pos = v->y_pos;
-			w->z_pos = v->z_pos + ROTOR_Z_OFFSET;
+			w->GetMutablePos().x_pos = v->GetPos().x_pos;
+			w->GetMutablePos().y_pos = v->GetPos().y_pos;
+			w->GetMutablePos().z_pos = v->GetPos().z_pos + ROTOR_Z_OFFSET;
 			w->vehstatus = {VehState::Hidden, VehState::Unclickable};
 			w->spritenum = 0xFF;
 			w->subtype = AIR_ROTOR;
@@ -487,23 +487,24 @@ static void HelicopterTickHandler(Aircraft *v)
 	/* if true, helicopter rotors do not rotate. This should only be the case if a helicopter is
 	 * loading/unloading at a terminal or stopped */
 	if (v->current_order.IsType(OT_LOADING) || v->vehstatus.Test(VehState::Stopped)) {
-		if (u->cur_speed != 0) {
-			u->cur_speed++;
-			if (u->cur_speed >= 0x80 && u->state == HRS_ROTOR_MOVING_3) {
-				u->cur_speed = 0;
+		if (u->GetMotion().cur_speed != 0) {
+			u->GetMutableMotion().cur_speed++;
+			if (u->GetMotion().cur_speed >= 0x80 && u->state == HRS_ROTOR_MOVING_3) {
+				u->GetMutableMotion().cur_speed = 0;
 			}
 		}
 	} else {
-		if (u->cur_speed == 0) {
-			u->cur_speed = 0x70;
+		if (u->GetMotion().cur_speed == 0) {
+			u->GetMutableMotion().cur_speed = 0x70;
 		}
-		if (u->cur_speed >= 0x50) {
-			u->cur_speed--;
+		if (u->GetMotion().cur_speed >= 0x50) {
+			u->GetMutableMotion().cur_speed--;
 		}
 	}
 
-	int tick = ++u->tick_counter;
-	int spd = u->cur_speed >> 4;
+	VehicleMotion &motion = u->GetMutableMotion();
+	int tick = ++motion.tick_counter;
+	int spd = u->GetMotion().cur_speed >> 4;
 
 	VehicleSpriteSeq seq;
 	if (spd == 0) {
@@ -511,7 +512,7 @@ static void HelicopterTickHandler(Aircraft *v)
 		GetRotorImage(v, EngineImageType::OnMap, &seq);
 		if (u->sprite_cache.sprite_seq == seq) return;
 	} else if (tick >= spd) {
-		u->tick_counter = 0;
+		motion.tick_counter = 0;
 		u->state++;
 		if (u->state > HRS_ROTOR_MOVING_3) u->state = HRS_ROTOR_MOVING_1;
 		GetRotorImage(v, EngineImageType::OnMap, &seq);
@@ -533,9 +534,9 @@ static void HelicopterTickHandler(Aircraft *v)
  */
 void SetAircraftPosition(Aircraft *v, int x, int y, int z)
 {
-	v->x_pos = x;
-	v->y_pos = y;
-	v->z_pos = z;
+	v->GetMutablePos().x_pos = x;
+	v->GetMutablePos().y_pos = y;
+	v->GetMutablePos().z_pos = z;
 
 	v->UpdatePosition();
 	v->UpdateViewport(true, false);
@@ -547,20 +548,20 @@ void SetAircraftPosition(Aircraft *v, int x, int y, int z)
 
 	int safe_x = Clamp(x, 0, Map::MaxX() * TILE_SIZE);
 	int safe_y = Clamp(y - 1, 0, Map::MaxY() * TILE_SIZE);
-	u->x_pos = x;
-	u->y_pos = y - ((v->z_pos - GetSlopePixelZ(safe_x, safe_y)) >> 3);
+	u->GetMutablePos().x_pos = x;
+	u->GetMutablePos().y_pos = y - ((v->GetPos().z_pos - GetSlopePixelZ(safe_x, safe_y)) >> 3);
 
-	safe_y = Clamp(u->y_pos, 0, Map::MaxY() * TILE_SIZE);
-	u->z_pos = GetSlopePixelZ(safe_x, safe_y);
+	safe_y = Clamp(u->GetPos().y_pos, 0, Map::MaxY() * TILE_SIZE);
+	u->GetMutablePos().z_pos = GetSlopePixelZ(safe_x, safe_y);
 	u->sprite_cache.sprite_seq.CopyWithoutPalette(v->sprite_cache.sprite_seq); // the shadow is never coloured
 
 	u->UpdatePositionAndViewport();
 
 	u = u->Next();
 	if (u != nullptr) {
-		u->x_pos = x;
-		u->y_pos = y;
-		u->z_pos = z + ROTOR_Z_OFFSET;
+		u->GetMutablePos().x_pos = x;
+		u->GetMutablePos().y_pos = y;
+		u->GetMutablePos().z_pos = z + ROTOR_Z_OFFSET;
 
 		u->UpdatePositionAndViewport();
 	}
@@ -572,18 +573,19 @@ void SetAircraftPosition(Aircraft *v, int x, int y, int z)
  */
 void HandleAircraftEnterHangar(Aircraft *v)
 {
-	v->GetMutableMotion().subspeed = 0;
-	v->progress = 0;
+	VehicleMotion &motion = v->GetMutableMotion();
+	motion.subspeed = 0;
+	motion.progress = 0;
 
 	Aircraft *u = v->Next();
 	u->vehstatus.Set(VehState::Hidden);
 	u = u->Next();
 	if (u != nullptr) {
 		u->vehstatus.Set(VehState::Hidden);
-		u->cur_speed = 0;
+		u->GetMutableMotion().cur_speed = 0;
 	}
 
-	SetAircraftPosition(v, v->x_pos, v->y_pos, v->z_pos);
+	SetAircraftPosition(v, v->GetPos().x_pos, v->GetPos().y_pos, v->GetPos().z_pos);
 }
 
 static void PlayAircraftSound(const Vehicle *v)
@@ -668,7 +670,7 @@ static int UpdateAircraftSpeed(Aircraft *v, uint speed_limit = SPEED_LIMIT_NONE,
 
 	const uint16_t cached_max_speed = v->GetVehicleCache().cached_max_speed;
 	if (cached_max_speed < speed_limit) {
-		if (v->cur_speed < speed_limit) hard_limit = false;
+		if (v->GetMotion().cur_speed < speed_limit) hard_limit = false;
 		speed_limit = cached_max_speed;
 	}
 
@@ -681,15 +683,15 @@ static int UpdateAircraftSpeed(Aircraft *v, uint speed_limit = SPEED_LIMIT_NONE,
 	 * method at slower speeds. This also results in less reduction at slow
 	 * speeds to that aircraft do not get to taxi speed straight after
 	 * touchdown. */
-	if (!hard_limit && v->cur_speed > speed_limit) {
-		speed_limit = v->cur_speed - std::max(1, ((v->cur_speed * v->cur_speed) / 16384) / _settings_game.vehicle.plane_speed);
+	if (!hard_limit && v->GetMotion().cur_speed > speed_limit) {
+		speed_limit = v->GetMotion().cur_speed - std::max(1, ((v->GetMotion().cur_speed * v->GetMotion().cur_speed) / 16384) / _settings_game.vehicle.plane_speed);
 	}
 
-	spd = std::min(v->cur_speed + (spd >> 8) + (motion.subspeed < t), speed_limit);
+	spd = std::min(v->GetMotion().cur_speed + (spd >> 8) + (motion.subspeed < t), speed_limit);
 
 	/* updates statusbar only if speed have changed to save CPU time */
-	if (spd != v->cur_speed) {
-		v->cur_speed = spd;
+	if (spd != v->GetMotion().cur_speed) {
+		v->GetMutableMotion().cur_speed = spd;
 		SetWindowWidgetDirty(WindowClass::VehicleView, v->index, WID_VV_START_STOP);
 	}
 
@@ -699,8 +701,8 @@ static int UpdateAircraftSpeed(Aircraft *v, uint speed_limit = SPEED_LIMIT_NONE,
 	/* Convert direction-independent speed into direction-dependent speed. (old movement method) */
 	spd = v->GetOldAdvanceSpeed(spd);
 
-	spd += v->progress;
-	v->progress = (uint8_t)spd;
+	spd += motion.progress;
+	motion.progress = (uint8_t)spd;
 	return spd >> 8;
 }
 
@@ -713,8 +715,8 @@ static int UpdateAircraftSpeed(Aircraft *v, uint speed_limit = SPEED_LIMIT_NONE,
  */
 int GetTileHeightBelowAircraft(const Vehicle *v)
 {
-	int safe_x = Clamp(v->x_pos, 0, Map::MaxX() * TILE_SIZE);
-	int safe_y = Clamp(v->y_pos, 0, Map::MaxY() * TILE_SIZE);
+	int safe_x = Clamp(v->GetPos().x_pos, 0, Map::MaxX() * TILE_SIZE);
+	int safe_y = Clamp(v->GetPos().y_pos, 0, Map::MaxY() * TILE_SIZE);
 	return TileHeight(TileVirtXY(safe_x, safe_y)) * TILE_HEIGHT;
 }
 
@@ -738,7 +740,7 @@ void GetAircraftFlightLevelBounds(const Vehicle *v, int *min_level, int *max_lev
 	/* Make sure eastbound and westbound planes do not "crash" into each
 	 * other by providing them with vertical separation
 	 */
-	switch (v->direction) {
+	switch (v->GetMotion().direction) {
 		case Direction::N:
 		case Direction::NE:
 		case Direction::E:
@@ -784,7 +786,7 @@ int GetAircraftFlightLevel(T *v, bool takeoff)
 	assert(aircraft_min_altitude < aircraft_middle_altitude);
 	assert(aircraft_middle_altitude < aircraft_max_altitude);
 
-	int z = v->z_pos;
+	int z = v->GetPos().z_pos;
 	if (z < aircraft_min_altitude ||
 			(v->flags.Test(VehicleAirFlag::InMinimumHeightCorrection) && z < aircraft_middle_altitude)) {
 		/* Ascend. And don't fly into that mountain right ahead.
@@ -842,8 +844,8 @@ static uint8_t AircraftGetEntryPoint(const Aircraft *v, const AirportFTAClass *a
 		tile = (st->airport.tile != INVALID_TILE) ? st->airport.tile : st->xy;
 	}
 
-	int delta_x = v->x_pos - TileX(tile) * TILE_SIZE;
-	int delta_y = v->y_pos - TileY(tile) * TILE_SIZE;
+	int delta_x = v->GetPos().x_pos - TileX(tile) * TILE_SIZE;
+	int delta_y = v->GetPos().y_pos - TileY(tile) * TILE_SIZE;
 
 	DiagDirection dir;
 	if (abs(delta_y) < abs(delta_x)) {
@@ -899,7 +901,7 @@ static bool AircraftController(Aircraft *v)
 			UpdateAircraftCache(v);
 			AircraftNextAirportPos_and_Order(v);
 			/* get aircraft back on running altitude */
-			SetAircraftPosition(v, v->x_pos, v->y_pos, GetAircraftFlightLevel(v));
+			SetAircraftPosition(v, v->GetPos().x_pos, v->GetPos().y_pos, GetAircraftFlightLevel(v));
 			return false;
 		}
 	}
@@ -915,9 +917,9 @@ static bool AircraftController(Aircraft *v)
 		Aircraft *u = v->Next()->Next();
 
 		/* Make sure the rotors don't rotate too fast */
-		if (u->cur_speed > 32) {
-			v->cur_speed = 0;
-			if (--u->cur_speed == 32) {
+		if (u->GetMotion().cur_speed > 32) {
+			v->GetMutableMotion().cur_speed = 0;
+			if (--u->GetMutableMotion().cur_speed == 32) {
 				if (!PlayVehicleSound(v, VSE_START)) {
 					SoundID sfx = AircraftVehInfo(v->engine_type)->sfx;
 					/* For compatibility with old NewGRF we ignore the sfx property, unless a NewGRF-defined sound is used.
@@ -927,7 +929,7 @@ static bool AircraftController(Aircraft *v)
 				}
 			}
 		} else {
-			u->cur_speed = 32;
+			u->GetMutableMotion().cur_speed = 32;
 			int count = UpdateAircraftSpeed(v);
 			if (count > 0) {
 				v->tile = TileIndex{};
@@ -936,11 +938,11 @@ static bool AircraftController(Aircraft *v)
 				GetAircraftFlightLevelBounds(v, &z_dest, nullptr);
 
 				/* Reached altitude? */
-				if (v->z_pos >= z_dest) {
-					v->cur_speed = 0;
+				if (v->GetPos().z_pos >= z_dest) {
+					v->GetMutableMotion().cur_speed = 0;
 					return true;
 				}
-				SetAircraftPosition(v, v->x_pos, v->y_pos, std::min(v->z_pos + count, z_dest));
+				SetAircraftPosition(v, v->GetPos().x_pos, v->GetPos().y_pos, std::min(v->GetPos().z_pos + count, z_dest));
 			}
 		}
 		return false;
@@ -961,8 +963,8 @@ static bool AircraftController(Aircraft *v)
 		 * Helicopter has arrived at the target landing pad, so the current position is also where it should land.
 		 * Except for Oilrigs which are special due to being a 1x1 station, and helicopters land outside it. */
 		if (st->airport.type != AT_OILRIG) {
-			x = v->x_pos;
-			y = v->y_pos;
+			x = v->GetPos().x_pos;
+			y = v->GetPos().y_pos;
 			tile = TileVirtXY(x, y);
 		}
 		v->tile = tile;
@@ -970,22 +972,22 @@ static bool AircraftController(Aircraft *v)
 		/* Find altitude of landing position. */
 		int z = GetSlopePixelZ(x, y) + 1 + afc->delta_z;
 
-		if (z == v->z_pos) {
+		if (z == v->GetPos().z_pos) {
 			Vehicle *u = v->Next()->Next();
 
 			/*  Increase speed of rotors. When speed is 80, we've landed. */
-			if (u->cur_speed >= 80) {
+			if (u->GetMotion().cur_speed >= 80) {
 				v->flags.Reset(VehicleAirFlag::HelicopterDirectDescent);
 				return true;
 			}
-			u->cur_speed += 4;
+			u->GetMutableMotion().cur_speed += 4;
 		} else {
 			int count = UpdateAircraftSpeed(v);
 			if (count > 0) {
-				if (v->z_pos > z) {
-					SetAircraftPosition(v, v->x_pos, v->y_pos, std::max(v->z_pos - count, z));
+				if (v->GetPos().z_pos > z) {
+					SetAircraftPosition(v, v->GetPos().x_pos, v->GetPos().y_pos, std::max(v->GetPos().z_pos - count, z));
 				} else {
-					SetAircraftPosition(v, v->x_pos, v->y_pos, std::min(v->z_pos + count, z));
+					SetAircraftPosition(v, v->GetPos().x_pos, v->GetPos().y_pos, std::min(v->GetPos().z_pos + count, z));
 				}
 			}
 		}
@@ -993,7 +995,7 @@ static bool AircraftController(Aircraft *v)
 	}
 
 	/* Get distance from destination pos to current pos. */
-	uint dist = abs(x + amd.x - v->x_pos) + abs(y + amd.y - v->y_pos);
+	uint dist = abs(x + amd.x - v->GetPos().x_pos) + abs(y + amd.y - v->GetPos().y_pos);
 
 	/* Need exact position? */
 	if (!amd.flags.Test(AirportMovingDataFlag::ExactPosition) && dist <= (amd.flags.Test(AirportMovingDataFlag::SlowTurn) ? 8U : 4U)) return true;
@@ -1001,24 +1003,24 @@ static bool AircraftController(Aircraft *v)
 	/* At final pos? */
 	if (dist == 0) {
 		/* Change direction smoothly to final direction. */
-		DirDiff dirdiff = DirDifference(amd.direction, v->direction);
+		DirDiff dirdiff = DirDifference(amd.direction, v->GetMotion().direction);
 		/* if distance is 0, and plane points in right direction, no point in calling
 		 * UpdateAircraftSpeed(). So do it only afterwards */
 		if (dirdiff == DirDiff::Same) {
-			v->cur_speed = 0;
+			v->GetMutableMotion().cur_speed = 0;
 			return true;
 		}
 
 		if (!UpdateAircraftSpeed(v, SPEED_LIMIT_TAXI)) return false;
 
-		v->direction = ChangeDir(v->direction, LimitDirDiff(dirdiff));
-		v->cur_speed >>= 1;
+		v->GetMutableMotion().direction = ChangeDir(v->GetMotion().direction, LimitDirDiff(dirdiff));
+		v->GetMutableMotion().cur_speed >>= 1;
 
-		SetAircraftPosition(v, v->x_pos, v->y_pos, v->z_pos);
+		SetAircraftPosition(v, v->GetPos().x_pos, v->GetPos().y_pos, v->GetPos().z_pos);
 		return false;
 	}
 
-	if (amd.flags.Test(AirportMovingDataFlag::Brake) && v->cur_speed > SPEED_LIMIT_TAXI * _settings_game.vehicle.plane_speed) {
+	if (amd.flags.Test(AirportMovingDataFlag::Brake) && v->GetMotion().cur_speed > SPEED_LIMIT_TAXI * _settings_game.vehicle.plane_speed) {
 		MaybeCrashAirplane(v);
 		if (v->vehstatus.Test(VehState::Crashed)) return false;
 	}
@@ -1060,12 +1062,12 @@ static bool AircraftController(Aircraft *v)
 
 		if (nudge_towards_target || amd.flags.Test(AirportMovingDataFlag::Land)) {
 			/* move vehicle one pixel towards target */
-			gp.x = (v->x_pos != (x + amd.x)) ?
-					v->x_pos + ((x + amd.x > v->x_pos) ? 1 : -1) :
-					v->x_pos;
-			gp.y = (v->y_pos != (y + amd.y)) ?
-					v->y_pos + ((y + amd.y > v->y_pos) ? 1 : -1) :
-					v->y_pos;
+			gp.x = (v->GetPos().x_pos != (x + amd.x)) ?
+					v->GetPos().x_pos + ((x + amd.x > v->GetPos().x_pos) ? 1 : -1) :
+					v->GetPos().x_pos;
+			gp.y = (v->GetPos().y_pos != (y + amd.y)) ?
+					v->GetPos().y_pos + ((y + amd.y > v->GetPos().y_pos) ? 1 : -1) :
+					v->GetPos().y_pos;
 
 			/* Oilrigs must keep v->tile as st->airport.tile, since the landing pad is in a non-airport tile */
 			gp.new_tile = (st->airport.type == AT_OILRIG) ? st->airport.tile : TileVirtXY(gp.x, gp.y);
@@ -1074,7 +1076,7 @@ static bool AircraftController(Aircraft *v)
 
 			/* Turn. Do it slowly if in the air. */
 			Direction newdir = GetDirectionTowards(v, x + amd.x, y + amd.y);
-			if (newdir != v->direction) {
+			if (newdir != v->GetMotion().direction) {
 				if (amd.flags.Test(AirportMovingDataFlag::SlowTurn) && v->number_consecutive_turns < 8 && v->subtype == AIR_AIRCRAFT) {
 					if (v->turn_counter == 0 || newdir == v->last_direction) {
 						if (newdir == v->last_direction) {
@@ -1083,23 +1085,23 @@ static bool AircraftController(Aircraft *v)
 							v->number_consecutive_turns++;
 						}
 						v->turn_counter = 2 * _settings_game.vehicle.plane_speed;
-						v->last_direction = v->direction;
-						v->direction = newdir;
+						v->last_direction = v->GetMotion().direction;
+						v->GetMutableMotion().direction = newdir;
 					}
 
 					/* Move vehicle. */
 					gp = GetNewVehiclePos(v);
 				} else {
-					v->cur_speed >>= 1;
-					v->direction = newdir;
+					v->GetMutableMotion().cur_speed >>= 1;
+					v->GetMutableMotion().direction = newdir;
 
 					/* When leaving a terminal an aircraft often goes to a position
 					 * directly in front of it. If it would move while turning it
 					 * would need an two extra turns to end up at the correct position.
 					 * To make it easier just disallow all moving while turning as
 					 * long as an aircraft is on the ground. */
-					gp.x = v->x_pos;
-					gp.y = v->y_pos;
+					gp.x = v->GetPos().x_pos;
+					gp.y = v->GetPos().y_pos;
 					gp.new_tile = gp.old_tile = v->tile;
 				}
 			} else {
@@ -1114,7 +1116,7 @@ static bool AircraftController(Aircraft *v)
 		if (amd.flags.Any({AirportMovingDataFlag::Takeoff, AirportMovingDataFlag::SlowTurn, AirportMovingDataFlag::Land})) v->tile = TileIndex{};
 
 		/* Adjust Z for land or takeoff? */
-		int z = v->z_pos;
+		int z = v->GetPos().z_pos;
 
 		if (amd.flags.Test(AirportMovingDataFlag::Takeoff)) {
 			z = GetAircraftFlightLevel(v, true);
@@ -1131,7 +1133,7 @@ static bool AircraftController(Aircraft *v)
 		 * Given we are landing/breaking, and as such are not a helicopter, we know that there has to be a hangar.
 		 * We also know that the airport itself has to be completely flat (otherwise it is not a valid airport).
 		 * Therefore, use the height of this hangar to calculate our z-value. */
-		int airport_z = v->z_pos;
+		int airport_z = v->GetPos().z_pos;
 		if (amd.flags.Any({AirportMovingDataFlag::Land, AirportMovingDataFlag::Brake}) && st != nullptr) {
 			assert(st->airport.HasHangar());
 			TileIndex hangar_tile = st->airport.GetHangarTile(0);
@@ -1199,15 +1201,15 @@ static bool HandleCrashedAircraft(Aircraft *v)
 
 	/* make aircraft crash down to the ground */
 	if (v->crashed_counter < 500 && st == nullptr && ((v->crashed_counter % 3) == 0)) {
-		int z = GetSlopePixelZ(Clamp(v->x_pos, 0, Map::MaxX() * TILE_SIZE), Clamp(v->y_pos, 0, Map::MaxY() * TILE_SIZE));
-		v->z_pos -= 1;
-		if (v->z_pos <= z) {
+		int z = GetSlopePixelZ(Clamp(v->GetPos().x_pos, 0, Map::MaxX() * TILE_SIZE), Clamp(v->GetPos().y_pos, 0, Map::MaxY() * TILE_SIZE));
+		v->GetMutablePos().z_pos -= 1;
+		if (v->GetPos().z_pos <= z) {
 			v->crashed_counter = 500;
-			v->z_pos = z + 1;
+			v->GetMutablePos().z_pos = z + 1;
 		} else {
 			v->crashed_counter = 0;
 		}
-		SetAircraftPosition(v, v->x_pos, v->y_pos, v->z_pos);
+		SetAircraftPosition(v, v->GetPos().x_pos, v->GetPos().y_pos, v->GetPos().z_pos);
 	}
 
 	if (v->crashed_counter < 650) {
@@ -1217,8 +1219,8 @@ static bool HandleCrashedAircraft(Aircraft *v)
 				DirDiff::Left45, DirDiff::Same, DirDiff::Same, DirDiff::Right45
 			};
 
-			v->direction = ChangeDir(v->direction, delta[GB(r, 16, 2)]);
-			SetAircraftPosition(v, v->x_pos, v->y_pos, v->z_pos);
+			v->GetMutableMotion().direction = ChangeDir(v->GetMotion().direction, delta[GB(r, 16, 2)]);
+			SetAircraftPosition(v, v->GetPos().x_pos, v->GetPos().y_pos, v->GetPos().z_pos);
 			r = Random();
 			CreateEffectVehicleRel(v,
 				GB(r, 0, 4) - 4,
@@ -1268,17 +1270,17 @@ static void HandleAircraftSmoke(Aircraft *v, bool mode)
 	if (!v->vehstatus.Test(VehState::AircraftBroken)) return;
 
 	/* Stop smoking when landed */
-	if (v->cur_speed < 10) {
+	if (v->GetMotion().cur_speed < 10) {
 		v->vehstatus.Reset(VehState::AircraftBroken);
 		v->breakdown_ctr = 0;
 		return;
 	}
 
 	/* Spawn effect et most once per Tick, i.e. !mode */
-	if (!mode && (v->tick_counter & 0x0F) == 0) {
+	if (!mode && (v->GetMotion().tick_counter & 0x0F) == 0) {
 		CreateEffectVehicleRel(v,
-			smoke_pos[v->direction].x,
-			smoke_pos[v->direction].y,
+			smoke_pos[v->GetMotion().direction].x,
+			smoke_pos[v->GetMotion().direction].y,
 			2,
 			EV_BREAKDOWN_SMOKE_AIRCRAFT
 		);
@@ -1356,7 +1358,7 @@ static void CrashAirplane(Aircraft *v)
 	v->cargo.Truncate();
 	v->Next()->cargo.Truncate();
 	const Station *st = GetTargetAirportIfValid(v);
-	TileIndex vt = TileVirtXYClampedToMap(v->x_pos, v->y_pos);
+	TileIndex vt = TileVirtXYClampedToMap(v->GetPos().x_pos, v->GetPos().y_pos);
 
 	EncodedString headline;
 	if (st == nullptr) {
@@ -1446,7 +1448,7 @@ static void AircraftLandAirplane(Aircraft *v)
 {
 	Station *st = Station::Get(v->targetairport);
 
-	TileIndex vt = TileVirtXY(v->x_pos, v->y_pos);
+	TileIndex vt = TileVirtXY(v->GetPos().x_pos, v->GetPos().y_pos);
 
 	v->UpdateDeltaXY();
 
@@ -1484,10 +1486,11 @@ void AircraftNextAirportPos_and_Order(Aircraft *v)
  */
 void AircraftLeaveHangar(Aircraft *v, Direction exit_dir)
 {
-	v->cur_speed = 0;
-	v->GetMutableMotion().subspeed = 0;
-	v->progress = 0;
-	v->direction = exit_dir;
+	v->GetMutableMotion().cur_speed = 0;
+	VehicleMotion &motion = v->GetMutableMotion();
+	motion.subspeed = 0;
+	motion.progress = 0;
+	v->GetMutableMotion().direction = exit_dir;
 	v->vehstatus.Reset(VehState::Hidden);
 	{
 		Vehicle *u = v->Next();
@@ -1497,13 +1500,13 @@ void AircraftLeaveHangar(Aircraft *v, Direction exit_dir)
 		u = u->Next();
 		if (u != nullptr) {
 			u->vehstatus.Reset(VehState::Hidden);
-			u->cur_speed = 80;
+			u->GetMutableMotion().cur_speed = 80;
 		}
 	}
 
 	VehicleServiceInDepot(v);
 	v->LeaveUnbunchingDepot();
-	SetAircraftPosition(v, v->x_pos, v->y_pos, v->z_pos);
+	SetAircraftPosition(v, v->GetPos().x_pos, v->GetPos().y_pos, v->GetPos().z_pos);
 	InvalidateWindowData(WindowClass::VehicleDepot, v->tile);
 	SetWindowClassesDirty(WindowClass::AircraftList);
 }
@@ -1685,7 +1688,7 @@ static void AircraftEventHandler_Flying(Aircraft *v, const AirportFTAClass *apc)
 				/* save speed before, since if AirportHasBlock is false, it resets them to 0
 				 * we don't want that for plane in air
 				 * hack for speed thingy */
-				uint16_t tcur_speed = v->cur_speed;
+				uint16_t tcur_speed = v->GetMotion().cur_speed;
 				uint16_t tsubspeed = v->GetMotion().subspeed;
 				if (!AirportHasBlock(v, current, apc)) {
 					v->state = landingtype; // LANDING / HELILANDING
@@ -1697,7 +1700,7 @@ static void AircraftEventHandler_Flying(Aircraft *v, const AirportFTAClass *apc)
 					st->airport.blocks.Set(apc->layout[v->pos].blocks);
 					return;
 				}
-				v->cur_speed = tcur_speed;
+				v->GetMutableMotion().cur_speed = tcur_speed;
 				v->GetMutableMotion().subspeed = tsubspeed;
 			}
 			current = current->next.get();
@@ -1892,7 +1895,7 @@ static bool AirportHasBlock(Aircraft *v, const AirportFTA *current_pos, const Ai
 		}
 
 		if (st->airport.blocks.Any(blocks)) {
-			v->cur_speed = 0;
+			v->GetMutableMotion().cur_speed = 0;
 			v->GetMutableMotion().subspeed = 0;
 			return true;
 		}
@@ -1933,7 +1936,7 @@ static bool AirportSetBlocks(Aircraft *v, const AirportFTA *current_pos, const A
 
 		Station *st = Station::Get(v->targetairport);
 		if (st->airport.blocks.Any(blocks)) {
-			v->cur_speed = 0;
+			v->GetMutableMotion().cur_speed = 0;
 			v->GetMutableMotion().subspeed = 0;
 			return false;
 		}
@@ -2150,7 +2153,7 @@ bool Aircraft::Tick()
 
 	PerformanceAccumulator framerate(PerformanceElement::GameLoopAircraft);
 
-	this->tick_counter++;
+	this->GetMutableMotion().tick_counter++;
 
 	if (!this->vehstatus.Test(VehState::Stopped)) this->running_ticks++;
 

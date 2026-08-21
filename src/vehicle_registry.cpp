@@ -135,6 +135,7 @@ void RegisterVehicleEntity(VehicleID id)
 	data.registry.emplace<VehicleColourMap>(entity);
 	data.registry.emplace<VehicleCacheComponent>(entity);
 	data.registry.emplace<VehicleMotion>(entity);
+	data.registry.emplace<VehiclePosition>(entity);
 
 	data.entity_by_vehicle_id[index] = entity;
 

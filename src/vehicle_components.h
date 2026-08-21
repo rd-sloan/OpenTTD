@@ -56,25 +56,10 @@ struct VehicleCacheComponent {
 	VehicleCache cache{}; ///< The cached consist values.
 };
 
-/**
- * Sub-tile motion accumulators, read and written every tick for every moving vehicle.
- *
- * Unlike the phase 2 and 3 components these fields **are** serialised, so the members
- * on #Vehicle stay declared and remain what the save descriptors read. While shadow
- * verification is in place they are also authoritative for writes, with the component
- * kept in step; the save format therefore needs no staging machinery yet.
- *
- * This is the first component whose fields are genuinely hot: `subspeed` is
- * accumulated in `GroundVehicle::DoUpdateSpeed` and `motion_counter` in
- * `CallVehicleTicks`, both once per vehicle per tick. Phase 4 is expected to be
- * *slower* for exactly that reason -- the packed walk that pays for the indirection is
- * phase 5's job. @see docs/ecs-migration-plan.md
- */
-struct VehicleMotion {
-	uint8_t subspeed = 0; ///< Fractional speed, the remainder that did not become movement.
-	uint32_t motion_counter = 0; ///< Accumulates speed, used to time running sounds.
-
-	auto operator<=>(const VehicleMotion &) const = default;
-};
+/* #VehicleMotion, the hot per-tick component, is declared in vehicle_base.h rather than
+ * here. It has to be: #Vehicle::GetMovingDirection and friends are inline accessors that
+ * read it, and this header already includes vehicle_base.h for #VehicleCache, so defining
+ * it here and including this header there would be circular. The alternative was moving
+ * hot one-line accessors out of line, which costs a call on the movement path. */
 
 #endif /* VEHICLE_COMPONENTS_H */

@@ -649,7 +649,7 @@ CommandCost CmdStartStopVehicle(DoCommandFlags flags, VehicleID veh_id, bool eva
 		if (v->IsStoppedInDepot() && !flags.Test(DoCommandFlag::AutoReplace)) DeleteVehicleNews(veh_id, AdviceType::VehicleWaiting);
 
 		v->vehstatus.Flip(VehState::Stopped);
-		if (v->type != VehicleType::Train) v->cur_speed = 0; // trains can stop 'slowly'
+		if (v->type != VehicleType::Train) v->GetMutableMotion().cur_speed = 0; // trains can stop 'slowly'
 
 		/* Unbunching data is no longer valid. */
 		v->ResetDepotUnbunching();

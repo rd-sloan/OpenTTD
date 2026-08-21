@@ -91,6 +91,52 @@ struct VehicleCache {
 	auto operator<=>(const VehicleCache &) const = default;
 };
 
+/**
+ * Per-tick accumulators, held in the registry rather than on #Vehicle.
+ *
+ * This is a *component*, so it would naturally live in vehicle_components.h with the
+ * others. It sits here instead because #Vehicle's own inline accessors -- notably
+ * #Vehicle::GetMovingDirection -- read it, and vehicle_components.h includes this header
+ * for #VehicleCache. Defining it there and including that header here would be circular,
+ * and the alternative was moving hot one-line accessors out of line.
+ *
+ * Fields are grouped by what a hot loop reads together rather than by what they mean:
+ * `tick_counter` is a generic per-vehicle tick count, but `CallVehicleTicks` reads it in
+ * the same few lines as `motion_counter`, so one lookup serves both. The save descriptors
+ * point straight at these fields. @see saveload/component_sl.h @see vehicle_components.h
+ */
+struct VehicleMotion {
+	uint16_t cur_speed = 0; ///< Current speed.
+	uint8_t subspeed = 0; ///< Fractional speed, the remainder that did not become movement.
+	uint32_t motion_counter = 0; ///< Accumulates speed, used to time running sounds.
+	uint8_t tick_counter = 0; ///< Increased by one for each tick, for periodic per-vehicle work.
+	uint8_t progress = 0; ///< The percentage (if divided by 256) this vehicle already crossed the tile unit.
+	Direction direction = Direction::Invalid; ///< Facing. Default matches the member it replaced.
+
+	auto operator<=>(const VehicleMotion &) const = default;
+};
+
+/**
+ * World position, held in the registry rather than on #Vehicle.
+ *
+ * Kept separate from #VehicleMotion deliberately. A great deal of code -- drawing,
+ * viewport culling, tile lookups, sound placement -- wants coordinates and nothing else,
+ * and a component should be the set of fields a loop reads together. Twelve bytes of
+ * coordinates is also the largest contiguous block phase 4 removes from #Vehicle, so it
+ * is the group most likely to shrink the struct rather than vanish into padding.
+ *
+ * The three fields are one component rather than three: movement code reads and writes
+ * them together, so splitting them would triple the lookups for no benefit.
+ * @see saveload/component_sl.h
+ */
+struct VehiclePosition {
+	int32_t x_pos = 0; ///< x coordinate.
+	int32_t y_pos = 0; ///< y coordinate.
+	int32_t z_pos = 0; ///< z coordinate.
+
+	auto operator<=>(const VehiclePosition &) const = default;
+};
+
 /** Sprite sequence for a vehicle part. */
 struct VehicleSpriteSeq {
 	std::array<PalSpriteID, 8> seq;
@@ -256,11 +302,6 @@ public:
 	uint8_t breakdowns_since_last_service = 0; ///< Counter for the amount of breakdowns.
 	uint8_t breakdown_chance = 0; ///< Current chance of breakdowns.
 
-	int32_t x_pos = 0; ///< x coordinate.
-	int32_t y_pos = 0; ///< y coordinate.
-	int32_t z_pos = 0; ///< z coordinate.
-	Direction direction = Direction::Invalid; ///< facing
-
 	Owner owner = INVALID_OWNER; ///< Which company owns the vehicle?
 	/**
 	 * currently displayed sprite index
@@ -274,9 +315,7 @@ public:
 	TextEffectID fill_percent_te_id = INVALID_TE_ID; ///< a text-effect id to a loading indicator object
 	UnitID unitnumber{}; ///< unit number, for display purposes only
 
-	uint16_t cur_speed = 0; ///< current speed
 	uint8_t acceleration = 0; ///< used by train & aircraft
-	uint8_t progress = 0; ///< The percentage (if divided by 256) this vehicle already crossed the tile unit.
 
 	VehicleRandomTriggers waiting_random_triggers; ///< Triggers to be yet matched before rerandomizing the random bits.
 	uint16_t random_bits = 0; ///< Bits used for randomized variational spritegroups.
@@ -294,7 +333,6 @@ public:
 	int8_t trip_occupancy = 0; ///< NOSAVE: Occupancy of vehicle of the current trip (updated after leaving a station).
 
 	uint8_t day_counter = 0; ///< Increased by one for each day
-	uint8_t tick_counter = 0; ///< Increased by one for each tick
 	uint8_t running_ticks = 0; ///< Number of ticks this vehicle was not stopped this day
 	uint16_t load_unload_ticks = 0; ///< Ticks to wait before starting next cycle.
 
@@ -387,6 +425,12 @@ public:
 	const struct VehicleMotion &GetMotion() const;
 	struct VehicleMotion &GetMutableMotion();
 
+	/* World position, held in the VehiclePosition component. Same rules: resolve ONCE per
+	 * function, and do not hold the reference across a call that might destroy a vehicle
+	 * or sort the registry. */
+	const struct VehiclePosition &GetPos() const;
+	struct VehiclePosition &GetMutablePos();
+
 	/**
 	 * Is this vehicle moving backwards?
 	 * @return \c true iff the vehicle is moving backwards.
@@ -427,13 +471,13 @@ public:
 	 * Get the moving direction of this vehicle chain.
 	 * @return The direction that the vehicle chain is currently moving.
 	 */
-	Direction GetMovingDirection() const { return this->IsDrivingBackwards() ? ReverseDir(this->direction) : this->direction; }
+	Direction GetMovingDirection() const { return this->IsDrivingBackwards() ? ReverseDir(this->GetMotion().direction) : this->GetMotion().direction; }
 
 	/**
 	 * Set the movement direction of this vehicle chain.
 	 * @param d The direction to move.
 	 */
-	void SetMovingDirection(Direction d) { this->direction = this->IsDrivingBackwards() ? ReverseDir(d) : d; }
+	void SetMovingDirection(Direction d) { this->GetMutableMotion().direction = this->IsDrivingBackwards() ? ReverseDir(d) : d; }
 
 	/**
 	 * Determines the effective direction-specific vehicle movement speed.
@@ -1268,16 +1312,16 @@ struct SpecializedVehicle : public Vehicle {
 		 * there won't be enough change in bounding box or offsets to need
 		 * to resolve a new sprite.
 		 */
-		if (this->direction != this->sprite_cache.last_direction || this->sprite_cache.is_viewport_candidate) {
+		if (this->GetMotion().direction != this->sprite_cache.last_direction || this->sprite_cache.is_viewport_candidate) {
 			VehicleSpriteSeq seq;
 
-			((T*)this)->T::GetImage(this->direction, EngineImageType::OnMap, &seq);
+			((T*)this)->T::GetImage(this->GetMotion().direction, EngineImageType::OnMap, &seq);
 			if (this->sprite_cache.sprite_seq != seq) {
 				sprite_has_changed = true;
 				this->sprite_cache.sprite_seq = seq;
 			}
 
-			this->sprite_cache.last_direction = this->direction;
+			this->sprite_cache.last_direction = this->GetMotion().direction;
 			this->sprite_cache.revalidate_before_draw = false;
 		} else {
 			/*

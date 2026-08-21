@@ -208,7 +208,7 @@ void RoadStop::Leave(RoadVehicle *rv)
 		this->SetEntranceBusy(false);
 	} else {
 		/* Otherwise just leave the drive through's entry cache. */
-		this->GetEntry(DirToDiagDir(rv->direction)).Leave(rv);
+		this->GetEntry(DirToDiagDir(rv->GetMotion().direction)).Leave(rv);
 	}
 }
 
@@ -236,7 +236,7 @@ bool RoadStop::Enter(RoadVehicle *rv)
 	}
 
 	/* Vehicles entering a drive-through stop from the 'normal' side use first bay (bay 0). */
-	this->GetEntry(DirToDiagDir(rv->direction)).Enter(rv);
+	this->GetEntry(DirToDiagDir(rv->GetMotion().direction)).Enter(rv);
 
 	/* Indicate a drive-through stop */
 	SetBit(rv->state, RVS_IN_DT_ROAD_STOP);
@@ -334,7 +334,7 @@ void RoadStop::Entry::Rebuild(const RoadStop *rs, int side)
 		this->length += TILE_SIZE;
 		for (const Vehicle *v : VehiclesOnTile(tile)) {
 			/* Not a RV or not in the right direction or crashed :( */
-			if (v->type != VehicleType::Road || DirToDiagDir(v->direction) != entry_dir || !v->IsPrimaryVehicle() || v->vehstatus.Test(VehState::Crashed)) continue;
+			if (v->type != VehicleType::Road || DirToDiagDir(v->GetMotion().direction) != entry_dir || !v->IsPrimaryVehicle() || v->vehstatus.Test(VehState::Crashed)) continue;
 
 			const RoadVehicle *rv = RoadVehicle::From(v);
 			/* Don't add ones not in a road stop */

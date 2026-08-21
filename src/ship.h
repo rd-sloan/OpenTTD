@@ -11,6 +11,7 @@
 #define SHIP_H
 
 #include "vehicle_base.h"
+#include "vehicle_components.h"
 #include "water_map.h"
 
 void GetShipSpriteSize(EngineID engine, uint &width, uint &height, int &xoffs, int &yoffs, EngineImageType image_type);
@@ -46,7 +47,7 @@ struct Ship final : public SpecializedVehicle<Ship, VehicleType::Ship> {
 	void PlayLeaveStationSound(bool force = false) const override;
 	bool IsPrimaryVehicle() const override { return true; }
 	void GetImage(Direction direction, EngineImageType image_type, VehicleSpriteSeq *result) const override;
-	int GetDisplaySpeed() const override { return this->cur_speed / 2; }
+	int GetDisplaySpeed() const override { return this->GetMotion().cur_speed / 2; }
 	int GetDisplayMaxSpeed() const override { return this->GetVehicleCache().cached_max_speed / 2; }
 	int GetCurrentMaxSpeed() const override { return std::min<int>(this->GetVehicleCache().cached_max_speed, this->current_order.GetMaxSpeed() * 2); }
 	Money GetRunningCost() const override;

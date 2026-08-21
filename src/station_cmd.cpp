@@ -3870,7 +3870,7 @@ static VehicleEnterTileStates VehicleEnterTile_Station(Vehicle *v, TileIndex til
 			} else if (x < stop) {
 				v->vehstatus.Set(VehState::TrainSlowing);
 				uint16_t spd = std::max(0, (stop - x) * 20 - 15);
-				if (spd < v->cur_speed) v->cur_speed = spd;
+				if (spd < v->GetMotion().cur_speed) v->GetMutableMotion().cur_speed = spd;
 			}
 		}
 	} else if (v->type == VehicleType::Road) {

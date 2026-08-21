@@ -2972,7 +2972,7 @@ void CcStartStopVehicle(Commands, const CommandCost &result, VehicleID veh_id, b
 
 	StringID msg = v->vehstatus.Test(VehState::Stopped) ? STR_VEHICLE_COMMAND_STOPPED : STR_VEHICLE_COMMAND_STARTED;
 	const Vehicle *moving_front = v->GetMovingFront();
-	Point pt = RemapCoords(moving_front->x_pos, moving_front->y_pos, moving_front->z_pos);
+	Point pt = RemapCoords(moving_front->GetPos().x_pos, moving_front->GetPos().y_pos, moving_front->GetPos().z_pos);
 	AddTextEffect(GetEncodedString(msg), pt.x, pt.y, Ticks::DAY_TICKS, TextEffectMode::Rising);
 }
 
@@ -3196,7 +3196,7 @@ public:
 
 		if (v->vehstatus.Test(VehState::Stopped) && (!mouse_over_start_stop || v->IsStoppedInDepot())) {
 			if (v->type != VehicleType::Train) return GetString(STR_VEHICLE_STATUS_STOPPED);
-			if (v->cur_speed != 0) return GetString(STR_VEHICLE_STATUS_TRAIN_STOPPING_VEL, PackVelocity(v->GetDisplaySpeed(), v->type));
+			if (v->GetMotion().cur_speed != 0) return GetString(STR_VEHICLE_STATUS_TRAIN_STOPPING_VEL, PackVelocity(v->GetDisplaySpeed(), v->type));
 			if (Train::From(v)->gcache.cached_power == 0) return GetString(STR_VEHICLE_STATUS_TRAIN_NO_POWER);
 			return GetString(STR_VEHICLE_STATUS_STOPPED);
 		}
@@ -3315,7 +3315,7 @@ public:
 
 			case WID_VV_LOCATION: // center main view
 				if (_ctrl_pressed) {
-					ShowExtraViewportWindow(TileVirtXY(v->x_pos, v->y_pos));
+					ShowExtraViewportWindow(TileVirtXY(v->GetPos().x_pos, v->GetPos().y_pos));
 				} else {
 					const Window *mainwindow = GetMainWindow();
 					if (click_count > 1) {
@@ -3324,7 +3324,7 @@ public:
 					} else {
 						if (mainwindow->viewport->follow_vehicle == v->index) mainwindow->viewport->follow_vehicle = VehicleID::Invalid();
 						const Vehicle *moving_front = v->GetMovingFront();
-						ScrollMainWindowTo(moving_front->x_pos, moving_front->y_pos, moving_front->z_pos);
+						ScrollMainWindowTo(moving_front->GetPos().x_pos, moving_front->GetPos().y_pos, moving_front->GetPos().z_pos);
 					}
 				}
 				break;
@@ -3554,7 +3554,7 @@ void StopGlobalFollowVehicle(const Vehicle *v)
 	Window *w = GetMainWindow();
 	if (w->viewport->follow_vehicle == v->index) {
 		const Vehicle *moving_front = v->GetMovingFront();
-		ScrollMainWindowTo(moving_front->x_pos, moving_front->y_pos, moving_front->z_pos, true); // lock the main view on the vehicle's last position
+		ScrollMainWindowTo(moving_front->GetPos().x_pos, moving_front->GetPos().y_pos, moving_front->GetPos().z_pos, true); // lock the main view on the vehicle's last position
 		w->viewport->CancelFollow(*w);
 	}
 }
