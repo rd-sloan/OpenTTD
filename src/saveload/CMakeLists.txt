@@ -10,6 +10,7 @@ add_files(
     cargopacket_sl.cpp
     cheat_sl.cpp
     company_sl.cpp
+    component_sl.h
     depot_sl.cpp
     economy_sl.cpp
     engine_sl.cpp

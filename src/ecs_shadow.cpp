@@ -15,7 +15,6 @@
 
 /** Human-readable names, used as the key suffix in the benchmark report. */
 static const EnumIndexArray<std::string_view, ShadowCheck, ShadowCheck::End> _shadow_check_names{
-	"vehicle_motion",
 };
 
 /** Tallies, indexed by #ShadowCheck. */

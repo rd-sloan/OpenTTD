@@ -374,12 +374,12 @@ protected:
 	 */
 	inline uint DoUpdateSpeed(uint accel, int min_speed, int max_speed)
 	{
-		/* Verify the component, then read the authoritative member. Reads flip over to
-		 * the component only once shadow verification is silent. @see ecs_shadow.h */
-		this->VerifyMotion();
-		uint spd = this->subspeed + accel;
-		this->subspeed = (uint8_t)spd;
-		this->SyncMotion();
+		/* One lookup, then read and write through the reference. This is the hottest
+		 * motion site in the game, so resolving it per access would cost what phase 2's
+		 * `bounds` regression cost. @see Vehicle::GetVehicleCache */
+		VehicleMotion &motion = this->GetMutableMotion();
+		uint spd = motion.subspeed + accel;
+		motion.subspeed = (uint8_t)spd;
 
 		/* When we are going faster than the maximum speed, reduce the speed
 		 * somewhat gradually. But never lower than the maximum speed. */

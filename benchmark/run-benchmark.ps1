@@ -60,6 +60,15 @@
 
 .EXAMPLE
     .\run-benchmark.ps1 -Save wentbourne -Ticks 5000 -Label phase0 -CheckDeterminism
+
+.EXAMPLE
+    # Save-resume equivalence: 2000 ticks, save, reload, 1000 more, compared against a
+    # straight 3000. Catches an iteration order that depends on session history, which
+    # -CheckDeterminism cannot see because both its runs start from the same fresh load.
+    #
+    # KNOWN BROKEN: fails on unmodified code because the exit save is not tick-precise.
+    # See the comment above the implementation.
+    .\run-benchmark.ps1 -Save Hilbergen -Ticks 3000 -CheckResume 2000 -Label resume
 #>
 [CmdletBinding()]
 param(
@@ -69,6 +78,7 @@ param(
     [ValidateSet('Debug', 'RelWithDebInfo', 'Release')][string]$Config = 'RelWithDebInfo',
     [string]$BuildDir = 'build-release',
     [switch]$CheckDeterminism,
+    [int]$CheckResume = 0,
     [string]$CompareTo
 )
 
@@ -104,7 +114,10 @@ Copy-Item -Path (Join-Path $benchDir 'bench.cfg') -Destination $activeConfig -Fo
 $exitSave = Join-Path $buildPath 'save\autosave\exit.sav'
 
 function Invoke-Run {
-    param([string]$StatsPath, [string]$SaveCopyPath)
+    param([string]$StatsPath, [string]$SaveCopyPath, [int]$RunTicks = 0, [string]$FromSave)
+
+    if ($RunTicks -le 0) { $RunTicks = $Ticks }
+    if (-not $FromSave) { $FromSave = $savePath }
 
     if (Test-Path $exitSave) { Remove-Item $exitSave -Force }
 
@@ -113,11 +126,11 @@ function Invoke-Run {
         '-Q'                                    # skip NewGRF scanning
         '-c', $activeConfig
         '-snull', '-mnull'                      # no audio
-        "-vnull:ticks=$Ticks,stats=$StatsPath"
-        '-g', $savePath
+        "-vnull:ticks=$RunTicks,stats=$StatsPath"
+        '-g', $FromSave
     )
 
-    Write-Host "  running $Ticks ticks..." -NoNewline
+    Write-Host "  running $RunTicks ticks..." -NoNewline
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $proc = Start-Process -FilePath $exe -ArgumentList $arguments -WorkingDirectory $buildPath -Wait -PassThru -NoNewWindow
     $sw.Stop()
@@ -209,6 +222,60 @@ if ($CheckDeterminism) {
 
     $result = Compare-Fingerprint -Expected $fpA -Actual (Get-Fingerprint $repeatPath) -What 'fingerprints'
     Add-Content -Path $statsPath -Value "determinism.reproducible`t$(if ($result) { 1 } else { 0 })"
+}
+
+# Save-resume equivalence. Run $CheckResume ticks, save, reload, run the rest, and require
+# the same fingerprint as the straight run above.
+#
+# This tests the second of the two determinism requirements in docs/desync.md: a resumed
+# savegame must evolve identically to a run that was never saved. The -CheckDeterminism
+# check above cannot see a violation, because both of its runs start from the same fresh
+# load and so share whatever load-order state they were given. Anything whose iteration
+# order depends on session history passes that check and fails this one.
+#
+# KNOWN BROKEN, and left in place deliberately so the work stays visible. It fails on
+# unmodified code, and a FAIL here is not evidence of anything.
+#
+# The reason is sharper than "the save is not tick-precise", and was worth pinning down
+# because it is a real property of the game rather than of this script. Measured:
+#
+# - Runs from the curated fixtures are perfectly deterministic. Hilbergen at 20,000 ticks
+#   reproduces the same fingerprint across every sample ever taken.
+# - Runs from an autosave-on-exit save are NOT. Loading one fixed exit-save file and
+#   running 1000 ticks three times in the same binary gave C3D46F481F656B66,
+#   C3D46F481F656B66 and 7DBAF9A059E04D46.
+#
+# So a game resumed from an exit save does not evolve deterministically, which makes the
+# comparison meaningless regardless of tick precision. Confirmed on a build predating the
+# component work, so it is pre-existing and not a migration artefact.
+#
+# This is very likely the same root cause as the phase 0 finding that two identical runs
+# produce exit saves differing by a few hundred bytes in the VEHS chunk that do not scale
+# with run length: state that was never initialised gets serialised, and on load it feeds
+# garbage back into the simulation. That remains a hypothesis -- what is measured is the
+# instability, not its source.
+#
+# To make this check usable, the null video driver needs to write a save at an exact tick
+# (something like -vnull:save_at=N, the natural companion to its existing tick counter),
+# and the uninitialised-state question needs answering first, since a tick-precise save of
+# indeterminate state would still not reproduce.
+if ($CheckResume -gt 0) {
+    Write-Host "  WARNING: -CheckResume is known broken; the exit save is not tick-precise." -ForegroundColor Yellow
+    Write-Host "           A FAIL here is not evidence of anything. See the comment in this script."
+    if ($CheckResume -ge $Ticks) { throw "-CheckResume ($CheckResume) must be less than -Ticks ($Ticks)." }
+
+    $remainder = $Ticks - $CheckResume
+    Write-Host "Save-resume check: $CheckResume ticks, save, reload, $remainder more"
+
+    $midSave = Join-Path $outDir "$stem-mid.sav"
+    $legAPath = Join-Path $outDir "$stem-resume-leg1.tsv"
+    $legBPath = Join-Path $outDir "$stem-resume-leg2.tsv"
+
+    Invoke-Run -StatsPath $legAPath -SaveCopyPath $midSave -RunTicks $CheckResume
+    Invoke-Run -StatsPath $legBPath -RunTicks $remainder -FromSave $midSave
+
+    $result = Compare-Fingerprint -Expected $fpA -Actual (Get-Fingerprint $legBPath) -What "resumed run vs straight $Ticks"
+    Add-Content -Path $statsPath -Value "determinism.resume_equivalent`t$(if ($result) { 1 } else { 0 })"
 }
 
 if ($CompareTo) {

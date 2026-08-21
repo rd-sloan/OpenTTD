@@ -336,12 +336,17 @@ Unless a phase says otherwise, all of these must hold before moving on:
 6. Regression suite green.
 7. Benchmark timings recorded against the phase 0 baseline.
 
-Criterion 4 is newer than the others and is not yet implemented in the harness --
-it was identified while planning phase 6, which is the first phase able to violate
-it. It is listed here rather than there because it applies to anything that touches
-visit order, and its absence has been a gap in the verification story all along:
-criterion 3 runs the same save twice from a fresh load, so it cannot detect an
-order that depends on session history. See phase 6 for the mechanism.
+Criterion 4 is newer than the others. It was identified while planning phase 6, which
+is the first phase able to violate it, and is listed here rather than there because it
+applies to anything touching visit order: criterion 3 runs the same save twice from a
+fresh load, so it cannot detect an order that depends on session history.
+
+**It is currently unenforceable.** Phase 5 implemented it as `-CheckResume` and found
+that it fails on unmodified code, because a game resumed from an autosave-on-exit save
+does not evolve deterministically -- measured on a build predating the migration. See
+phase 5 for the evidence and phase 6 for what unblocking it requires. Until then this
+criterion is aspirational, and that gap is itself the most interesting thing the
+verification harness has turned up since the fingerprint replaced byte comparison.
 
 ## 5. Phases
 
@@ -367,8 +372,8 @@ fixes that as a side effect. Current sequence:
 | 1 -- Registry, identity, lifecycle | CLEAR | done |
 | 2 -- First real components | CLEAR | done, re-scoped |
 | 3 -- Shadow mode | CAUTION | done, re-scoped |
-| 4 -- Motion components | CAUTION | `vcache` fully migrated; 9 motion fields blocked on 5 |
-| 5 -- Save staging | CAUTION | **next** |
+| 4 -- Motion components | CAUTION | 3 field groups done; 7 remaining, now unblocked |
+| 5 -- Save staging | CAUTION | done -- no staging struct needed |
 | 6 -- Devirtualising the tick dispatch | DANGER | both dispatch variants, A/B'd |
 | 7 -- Economy and cargo | DANGER | |
 | 8 -- Hollowing out `Vehicle` | CAUTION | |
@@ -1257,7 +1262,7 @@ reduction recorded, and the four vehicle accumulator timings recorded against
 baseline **with the regression stated explicitly** and compared against the
 predicted range.
 
-### Phase 5 -- The save staging mechanism (CAUTION)
+### Phase 5 -- The save staging mechanism (CAUTION) -- done, and simpler than planned
 
 **This phase was moved forward from what used to be phase 7.** It was originally
 bundled with the hollowing-out work as "consolidation", but it is not
@@ -1267,12 +1272,153 @@ reader coming to this document fresh will otherwise wonder why staging sits in t
 middle.
 
 Constraint 3.3 explains the mechanism: `SLE_VAR(Vehicle, x_pos, …)` names a
-member, so a field cannot leave `Vehicle` while a descriptor reads it. The answer
-is a staging struct whose members mirror the descriptor names exactly, gathered
-from components before a save and scattered back after a load. The load half
-already exists, in `AfterLoadVehiclesPhase2` -- phase 4 needed it early, because
-savegame load writes members straight through the descriptors and leaves every
-migrated component stale.
+member, so a field cannot leave `Vehicle` while a descriptor reads it.
+
+#### No staging struct was needed
+
+The plan called for a staging struct: members mirroring the descriptor names,
+gathered from components before a save and scattered back after a load. **That turned
+out to be unnecessary, and the simpler answer is strictly better.**
+
+`SaveLoad` holds its address getter as a plain function pointer, and
+`GetVariableAddress` const_casts the result before load writes through it
+(`saveload.h:1388`). A getter may therefore return the address of *anything* --
+including a field inside a component. `SLE_GENERAL_NAME` already separates the
+savegame field name from the member expression used to find it, so the name stays
+`"subspeed"` while the storage moves somewhere else entirely.
+
+The result is `src/saveload/component_sl.h`, three macros wrapping that pattern.
+Compared with staging it means:
+
+- no duplicate storage, so `sizeof(Vehicle)` can actually fall;
+- no gather step, so a field cannot be missed on the way out;
+- no scatter step, so a component cannot start out stale on the way in -- which is
+  precisely the bug that produced 462 shadow mismatches in phase 4. Here it is not
+  possible, because load writes the component and there is nowhere else to write.
+  The `SyncMotion()` call added to `AfterLoadVehiclesPhase2` in phase 4 is deleted.
+
+Staging is still the right answer when the mapping is not one-to-one: a saved field
+computed from several component fields, a representation differing between disk and
+memory, or a component that does not exist for every vehicle. The macros deliberately
+do not attempt that. The plain case is most of them.
+
+One precondition, spelled out in the header because it is easy to break by accident:
+**the entity must exist when a descriptor runs.** Both loaders satisfy it --
+`Train::CreateAtIndex(index)` runs the `Vehicle` constructor, and therefore
+`RegisterVehicleEntity`, before `SlObject` is called (`vehicle_sl.cpp:1151`), and the
+TTD-era loader likewise creates the vehicle before `LoadChunk`.
+
+#### What landed
+
+`subspeed` and `motion_counter` are fully migrated -- commits 2 and 3 both done, both
+members deleted. That makes them the second and third fields to complete the sequence
+after `vcache`, and the first *serialised* ones.
+
+Sequencing that mattered: commit 2 flipped only **pure reads**. Read-modify-write
+sites were left alone until commit 3, because flipping just the read half of an RMW
+pair reproduces the exact phase 4 corruption -- read the component, write the member,
+and staleness propagates instead of being reported. In commit 3 the member disappears
+and the RMW converts atomically, so the hazard never exists.
+
+Commit 3 also turned out to be **compiler-verified in a way commit 2 is not**: delete
+the member and every remaining reference is a build error. Thirty-nine of them, across
+seven files, each one mechanical. That asymmetry is worth remembering -- it is why the
+descriptor switch and the member deletion were landed together rather than separately,
+and why commit 3 is the cheap half of a migration despite touching more lines.
+
+The TTD-era loader needed one hand-written `OldChunks` entry, since `OCL_SVAR` also
+takes a member offset. `LoadChunk` skips entries whose base is `nullptr`
+(`oldloader.cpp:166`), so the component lookup always has a real vehicle -- worth
+checking rather than assuming, because a null base would have turned a harmless
+offset computation into a crash.
+
+**Results.** Fingerprints unchanged on both fixtures across seven samples
+(`015ED3D109C5CCCC`, `29B52DBB6E7D2558`), determinism check passing, 102 of 102 tests.
+
+Timing: no measurable change. Six Hilbergen samples gave a minimum of 7,473 ms
+against 7,153 ms for the previous state, which is inside the ~7% band, and that batch
+spread 9.6% on a visibly warm machine. The mechanism that should have helped is real
+-- `DoUpdateSpeed` went from two registry lookups per call to one, because
+`SyncMotion()` did its own lookup -- but it is too small to resolve at this noise
+level. Resolving it needs interleaved A/B sampling, which is recorded as measurement
+debt rather than guessed at.
+
+**`sizeof(Vehicle)` did not move**: 560 in Debug, 544 in release, before and after
+removing five bytes of fields. This is the *second* time a removal has been absorbed
+by padding, so it is a property of the struct rather than a coincidence. Measured
+offsets after removal: `cur_speed` at 310, `acceleration` at 312, `progress` at 313,
+then `waiting_random_triggers` at 314, `random_bits` at 316, `last_station_visited` at
+318, and `last_loading_tick` at **328** -- an 8-byte-aligned `TickCounter` now preceded
+by six bytes of padding. `alignof(Vehicle)` is 8, and the anchors further down
+(`grf_cache` at 440, `sprite_cache` at 468) did not move at all.
+
+The lesson for the remaining field groups: **`Vehicle` is padding-rich around its
+8-byte-aligned members, so removing small scalars does not shrink it.** A size win
+needs either a large contiguous block -- which is what phase 8 targets in
+`BaseConsist` and `sprite_cache` -- or enough fields removed at once to cross a
+boundary. The three position fields are 12 bytes together and are the next real
+candidate. Check with `offsetof` before predicting; do not assume.
+
+**Exit: met**, with one criterion partly argued rather than measured.
+
+#### Savegame compatibility: what is proven and what is argued
+
+Worth separating, because this is the phase most able to break the file format.
+
+**The reading half is measured.** Both fixtures were written by a stock build. They
+load in the migrated build and reproduce the baseline fingerprint exactly, across
+seven samples. Since `subspeed` feeds both the fingerprint and the trajectory, a
+descriptor reading into the wrong place could not produce a matching 20,000-tick
+fingerprint. Reading a stock savegame is therefore correct, empirically.
+
+**The writing half is argued from the macro expansion**, not measured, because there
+is no stock build in this tree to load the output. The argument is narrow enough to be
+solid: `SLE_VAR_COMPONENT(Vehicle, VehicleMotion, subspeed, VarTypes::U8)` expands to
+`SLE_CONDVAR_COMPONENT_NAME("subspeed", …)`, producing a `SaveLoad` with the same
+`name`, the same `SaveLoadType::Variable`, the same `VarType`, and the same version
+range as the `SLE_VAR` it replaced. Only `address_func` differs. The writer derives the
+field table from exactly those members, so the emitted bytes cannot change. That is a
+statement about literal macro expansion rather than about behaviour, which is why it is
+acceptable here -- but it is still weaker than a load test, and a stock binary should be
+kept around to close it properly.
+
+#### The save-resume check could not be built, and why that is a finding
+
+The new standard criterion 4 -- save-resume equivalence -- was implemented as
+`-CheckResume` and **does not work**. It fails on unmodified code. Chasing that down
+produced something more useful than the check itself:
+
+- Runs from the curated fixtures are perfectly deterministic. Hilbergen at 20,000
+  ticks has reproduced the same fingerprint on every sample ever taken.
+- Runs from an autosave-on-exit save are **not**. Loading one fixed exit-save file and
+  running 1,000 ticks three times in the same binary gave `C3D46F481F656B66`,
+  `C3D46F481F656B66` and `7DBAF9A059E04D46`.
+
+Confirmed against a build predating any component work, so it is pre-existing rather
+than a migration artefact. A game resumed from an exit save does not evolve
+deterministically at all, which makes the comparison meaningless -- and the first
+diagnosis, "the exit save is not tick-precise", was wrong: tick precision would not
+fix indeterminate content.
+
+This is very likely the same root cause as the phase 0 finding that two identical runs
+produce exit saves differing by a few hundred bytes in `VEHS` that do not scale with
+run length: uninitialised state gets serialised, and on load it feeds back into the
+simulation. **That remains a hypothesis** -- what is measured is the instability, not
+its source.
+
+Two consequences. The switch stays in the harness marked known-broken, because a
+silently-absent check is worse than a loudly-broken one. And **phase 6's variant A gate
+now depends on unblocking this**, which means answering the uninitialised-state question
+and adding a tick-precise save (`-vnull:save_at=N`) to the null video driver. That is
+real work that phase 6 inherits, and it is better to know now than to discover it while
+trying to validate a dispatch rewrite.
+
+There is also a methodological warning here. The first crossload comparison looked like
+phase 5 had broken the round-trip: same input file, different fingerprint from the
+control. Running it three more times showed the same binary disagreeing with itself.
+**A single differing sample from a path whose determinism has not been established is
+not evidence.** The straight-run fingerprints had earned that trust over many samples;
+the resume path never had.
 
 #### Why it has to come before the tick loop is converted
 
@@ -1396,9 +1542,25 @@ cost rather than an optional extra: **a save-resume equivalence check.** Run N t
 then save, reload and run M more; separately run N+M ticks straight through;
 compare final fingerprints. Under variant A they must match. Under variant B they
 will not, and that failing check is the phase's evidence rather than a bug to chase.
-Worth adding to `run-benchmark.ps1` as a `-CheckResume` switch alongside
-`-CheckDeterminism`, because it is a test the project has been missing all along --
-it would apply to any future phase that touches visit order.
+
+**Phase 5 tried to build this and could not.** The switch exists in
+`run-benchmark.ps1` as `-CheckResume` and fails on unmodified code: a game resumed
+from an autosave-on-exit save does not evolve deterministically, measured on a build
+predating the migration. See phase 5 for the numbers. So phase 6 inherits three pieces
+of work here, in order:
+
+1. **Answer the uninitialised-state question.** Exit saves appear to carry state that
+   was never initialised, which is the leading hypothesis for both this instability and
+   the phase 0 byte-comparison noise. A tick-precise save of indeterminate content
+   would still not reproduce, so this comes first.
+2. **Add a tick-precise save** to the null video driver, `-vnull:save_at=N`, the
+   natural companion to its existing tick counter. Autosave-on-exit fires at process
+   exit rather than at a defined tick boundary.
+3. **Then** wire the check up and use it as variant A's gate.
+
+Until that is done, variant A cannot actually be *proven* order-preserving beyond the
+fingerprint check, and variant B's headline property cannot be demonstrated rather than
+argued. That is a real dependency and it should be scheduled, not discovered.
 
 Given that, variant B is scoped as a **measurement branch, not a foundation.**
 Nothing gets built on top of it, and phase 7 continues to target variant A. It is

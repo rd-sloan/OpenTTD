@@ -739,53 +739,25 @@ VehicleCache &Vehicle::GetMutableVehicleCache()
 }
 
 /**
- * Get this vehicle's sub-tile motion accumulators for reading, shadow-verified against
- * the members still on this struct.
+ * Get this vehicle's sub-tile motion accumulators for reading.
+ *
+ * The component is now the only copy. The members are gone and the save descriptors
+ * read this component directly, so there is nothing left to shadow-verify against.
+ *
  * @return The motion accumulators.
  */
 const VehicleMotion &Vehicle::GetMotion() const
 {
-	const VehicleMotion original{this->subspeed, this->motion_counter};
-	const VehicleMotion &shadow = GetVehicleRegistry().get<VehicleMotion>(GetVehicleEntity(this->index));
-	return ShadowVerify(ShadowCheck::VehicleMotion, original, shadow);
+	return GetVehicleRegistry().get<VehicleMotion>(GetVehicleEntity(this->index));
 }
 
 /**
- * Compare the component against the members without using its value.
- *
- * This is what a read site calls during the *first* stage of a field migration, while
- * writes are still authoritative on #Vehicle. Reading the component's value at that
- * stage is unsafe: if a write site was missed the component is stale, and feeding a
- * stale value back into a member turns a reportable coverage gap into real state
- * corruption. Verify here, read the member, and only flip reads over to #GetMotion
- * once this has been silent across a long run.
+ * Get this vehicle's sub-tile motion accumulators for writing.
+ * @return The motion accumulators.
  */
-void Vehicle::VerifyMotion() const
+VehicleMotion &Vehicle::GetMutableMotion()
 {
-#ifdef OTTD_ECS_SHADOW
-	const VehicleMotion original{this->subspeed, this->motion_counter};
-	const VehicleMotion &shadow = GetVehicleRegistry().get<VehicleMotion>(GetVehicleEntity(this->index));
-	ShadowVerify(ShadowCheck::VehicleMotion, original, shadow);
-#endif
-	/* Deliberately empty without shadow mode. ShadowVerify compiles to a no-op, but the
-	 * registry lookup that feeds it does not, so leaving the body unguarded made a
-	 * release build pay for verification it was not doing: 11.7% against 9.2% measured,
-	 * so about a fifth of this phase's regression was that bug rather than the seam. */
-}
-
-/**
- * Copy the motion members into the component, keeping the two in step while shadow
- * verification is in place. Called after every write, and after a savegame load, which
- * writes the members through the save descriptors and so bypasses every accessor.
- *
- * Redundant calls are harmless, so this sits after each individual write rather than
- * once per function, which removes the need to reason about control flow.
- */
-void Vehicle::SyncMotion()
-{
-	VehicleMotion &motion = GetVehicleRegistry().get<VehicleMotion>(GetVehicleEntity(this->index));
-	motion.subspeed = this->subspeed;
-	motion.motion_counter = this->motion_counter;
+	return GetVehicleRegistry().get<VehicleMotion>(GetVehicleEntity(this->index));
 }
 
 /**
@@ -1169,10 +1141,10 @@ void CallVehicleTicks()
 				/* Do not play any sound when stopped */
 				if (front->vehstatus.Test(VehState::Stopped) && (front->type != VehicleType::Train || front->cur_speed == 0)) continue;
 
-					/* Update motion counter for animation purposes. */
-					v->VerifyMotion();
-					v->motion_counter += front->cur_speed;
-					v->SyncMotion();
+				/* Update motion counter for animation purposes. One lookup serves both
+				 * this write and the sound check below. */
+				VehicleMotion &motion = v->GetMutableMotion();
+				motion.motion_counter += front->cur_speed;
 
 				/* Check vehicle type specifics */
 				switch (v->type) {
@@ -1193,7 +1165,7 @@ void CallVehicleTicks()
 				}
 
 				/* Play a running sound if the motion counter passes 256 (Do we not skip sounds?) */
-					if (GB(v->motion_counter, 0, 8) < front->cur_speed) PlayVehicleSound(v, VSE_RUNNING);
+				if (GB(motion.motion_counter, 0, 8) < front->cur_speed) PlayVehicleSound(v, VSE_RUNNING);
 
 				/* Play an alternating running sound every 16 ticks */
 				if (GB(v->tick_counter, 0, 4) == 0) {

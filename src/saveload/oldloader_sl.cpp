@@ -23,6 +23,7 @@
 #include "../timer/timer_game_calendar.h"
 #include "../timer/timer_game_calendar.h"
 #include "../vehicle_func.h"
+#include "../vehicle_components.h"
 #include "../effectvehicle_base.h"
 #include "../engine_func.h"
 #include "../company_base.h"
@@ -1199,7 +1200,13 @@ static const OldChunks vehicle_chunk[] = {
 	OCL_SVAR( OC_FILE_U16 | OC_VAR_U8, Vehicle, vehstatus ),
 	OCL_SVAR( OC_TTD | OC_UINT16, Vehicle, cur_speed ),
 	OCL_SVAR( OC_TTO | OC_FILE_U8 | OC_VAR_U16, Vehicle, cur_speed ),
-	OCL_SVAR(  OC_UINT8, Vehicle, subspeed ),
+	/* `subspeed` lives in the VehicleMotion component rather than on Vehicle, so this
+	 * resolves the component instead of taking a member offset. LoadChunk skips entries
+	 * whose base is nullptr, so the lookup always has a real vehicle to resolve.
+	 * @see saveload/component_sl.h */
+	{ OC_UINT8, 1, nullptr, [] (void *b) -> void * {
+		return std::addressof(static_cast<Vehicle *>(b)->GetMutableMotion().subspeed);
+	}, nullptr },
 	OCL_SVAR(  OC_UINT8, Vehicle, acceleration ),
 	OCL_SVAR(  OC_UINT8, Vehicle, progress ),
 

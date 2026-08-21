@@ -57,6 +57,11 @@ sync on `VehicleCache::cached_vis_effect` survived tens of millions of `vehicle_
 comparisons precisely because no accessor read that field. Before trusting a zero, confirm
 that something actually reads the field you care about through the accessor.
 
+As of phase 5 there are **no `shadow.` keys at all**: `vehicle_cache` and `vehicle_motion`
+have both completed their migrations and been retired. That is the expected end state for
+a field group — the scaffolding remains in `src/ecs_shadow.h` for the seven phase 4 field
+groups still to come.
+
 Each `perf.<group>` entry carries five figures, which answer different questions:
 
 | Key | Meaning |
@@ -356,6 +361,43 @@ gate on it.
 
 Save *format* compatibility is a separate, still-hard requirement, and is checked
 differently: a save written by a migrated build must load in unmodified OpenTTD.
+
+### Exit saves do not resume deterministically
+
+Found while trying to build a save-resume check in phase 5, and worth knowing before you
+trust any measurement that involves reloading an exit save.
+
+Loading **one fixed exit-save file** and running 1000 ticks, three times, in the same
+binary:
+
+```
+C3D46F481F656B66
+C3D46F481F656B66
+7DBAF9A059E04D46
+```
+
+Meanwhile runs from the curated fixtures reproduce their fingerprint every single time.
+So the instability is specific to exit saves, and it is pre-existing: the same behaviour
+appears on a build predating any of the migration work.
+
+This is probably the same root cause as the byte differences above -- uninitialised state
+being serialised, then fed back into the simulation on load -- but that is a hypothesis.
+What is measured is that a resumed game does not evolve deterministically.
+
+Two practical consequences:
+
+- **Never use an exit save as a fixture.** Only `Hilbergen.sav` and `wentbourne.sav`,
+  which were made by a normal build and are stable.
+- `-CheckResume` exists but is **known broken** and says so when you run it. Fixing it
+  needs the uninitialised-state question answered, plus a tick-precise save in the null
+  video driver (`-vnull:save_at=N`), because autosave-on-exit fires at process exit
+  rather than at a tick boundary.
+
+A related warning, since it nearly caused a wrong conclusion: the first cross-build
+comparison on an exit save looked exactly like a real regression -- same input file,
+different fingerprint from the control build. Three more runs showed the same binary
+disagreeing with itself. **A single differing sample from a path whose determinism has
+not been established is not evidence of anything.**
 
 ## Where the numbers come from
 

@@ -275,9 +275,7 @@ public:
 	UnitID unitnumber{}; ///< unit number, for display purposes only
 
 	uint16_t cur_speed = 0; ///< current speed
-	uint8_t subspeed = 0; ///< fractional speed
 	uint8_t acceleration = 0; ///< used by train & aircraft
-	uint32_t motion_counter = 0; ///< counter to occasionally play a vehicle sound.
 	uint8_t progress = 0; ///< The percentage (if divided by 256) this vehicle already crossed the tile unit.
 
 	VehicleRandomTriggers waiting_random_triggers; ///< Triggers to be yet matched before rerandomizing the random bits.
@@ -380,13 +378,14 @@ public:
 	const VehicleCache &GetVehicleCache() const;
 	VehicleCache &GetMutableVehicleCache();
 
-	/* Sub-tile motion accumulators, migrating to the VehicleMotion component under
-	 * shadow verification. `subspeed` and `motion_counter` below stay authoritative
-	 * for writes and are what the save descriptors read; SyncMotion keeps the
-	 * component in step. Resolve ONCE per function. @see ecs_shadow.h */
+	/* Sub-tile motion accumulators, now held only in the VehicleMotion component. The
+	 * `subspeed` and `motion_counter` members that used to sit above are gone, and the
+	 * save descriptors read the component directly. @see saveload/component_sl.h
+	 *
+	 * Resolve ONCE per function, and do not hold the reference across a call that might
+	 * destroy a vehicle or sort the registry. @see GetVehicleCache */
 	const struct VehicleMotion &GetMotion() const;
-	void VerifyMotion() const;
-	void SyncMotion();
+	struct VehicleMotion &GetMutableMotion();
 
 	/**
 	 * Is this vehicle moving backwards?

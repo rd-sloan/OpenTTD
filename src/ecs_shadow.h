@@ -44,9 +44,16 @@
 #	define OTTD_ECS_SHADOW
 #endif
 
-/** The field groups currently under shadow verification. */
+/**
+ * The field groups currently under shadow verification.
+ *
+ * Empty at the moment: `VehicleCache` and `VehicleMotion` have both completed their
+ * migrations, and a field group is removed from here once its member is deleted and the
+ * component holds the only copy. The scaffolding stays because the remaining phase 4
+ * field groups -- `cur_speed`, `direction`, `progress`, `tick_counter` and the three
+ * position fields -- each need it in turn.
+ */
 enum class ShadowCheck : uint8_t {
-	VehicleMotion, ///< Vehicle::subspeed and ::motion_counter against the VehicleMotion component.
 	End, ///< End of enum, must be last.
 };
 DECLARE_ENUM_AS_SEQUENTIAL(ShadowCheck)

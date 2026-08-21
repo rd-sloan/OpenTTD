@@ -39,6 +39,7 @@
 #include "timer/timer_game_economy.h"
 #include "town.h"
 #include "vehicle_base.h"
+#include "vehicle_components.h"
 
 #include "safeguards.h"
 
@@ -139,7 +140,7 @@ uint64_t HashVehicles()
 		hasher.Add(v->z_pos);
 		hasher.Add(v->direction);
 		hasher.Add(v->cur_speed);
-		hasher.Add(v->subspeed);
+		hasher.Add(v->GetMotion().subspeed);
 		hasher.Add(v->progress);
 		hasher.Add(v->vehstatus);
 

@@ -572,8 +572,7 @@ void SetAircraftPosition(Aircraft *v, int x, int y, int z)
  */
 void HandleAircraftEnterHangar(Aircraft *v)
 {
-	v->subspeed = 0;
-	v->SyncMotion();
+	v->GetMutableMotion().subspeed = 0;
 	v->progress = 0;
 
 	Aircraft *u = v->Next();
@@ -673,9 +672,8 @@ static int UpdateAircraftSpeed(Aircraft *v, uint speed_limit = SPEED_LIMIT_NONE,
 		speed_limit = cached_max_speed;
 	}
 
-	v->VerifyMotion();
-	v->subspeed = (t = v->subspeed) + (uint8_t)spd;
-	v->SyncMotion();
+	VehicleMotion &motion = v->GetMutableMotion();
+	motion.subspeed = (t = motion.subspeed) + (uint8_t)spd;
 
 	/* Aircraft's current speed is used twice so that very fast planes are
 	 * forced to slow down rapidly in the short distance needed. The magic
@@ -687,7 +685,7 @@ static int UpdateAircraftSpeed(Aircraft *v, uint speed_limit = SPEED_LIMIT_NONE,
 		speed_limit = v->cur_speed - std::max(1, ((v->cur_speed * v->cur_speed) / 16384) / _settings_game.vehicle.plane_speed);
 	}
 
-	spd = std::min(v->cur_speed + (spd >> 8) + (v->subspeed < t), speed_limit);
+	spd = std::min(v->cur_speed + (spd >> 8) + (motion.subspeed < t), speed_limit);
 
 	/* updates statusbar only if speed have changed to save CPU time */
 	if (spd != v->cur_speed) {
@@ -1487,8 +1485,7 @@ void AircraftNextAirportPos_and_Order(Aircraft *v)
 void AircraftLeaveHangar(Aircraft *v, Direction exit_dir)
 {
 	v->cur_speed = 0;
-	v->subspeed = 0;
-	v->SyncMotion();
+	v->GetMutableMotion().subspeed = 0;
 	v->progress = 0;
 	v->direction = exit_dir;
 	v->vehstatus.Reset(VehState::Hidden);
@@ -1689,7 +1686,7 @@ static void AircraftEventHandler_Flying(Aircraft *v, const AirportFTAClass *apc)
 				 * we don't want that for plane in air
 				 * hack for speed thingy */
 				uint16_t tcur_speed = v->cur_speed;
-				uint16_t tsubspeed = v->subspeed;
+				uint16_t tsubspeed = v->GetMotion().subspeed;
 				if (!AirportHasBlock(v, current, apc)) {
 					v->state = landingtype; // LANDING / HELILANDING
 					if (v->state == HELILANDING) v->flags.Set(VehicleAirFlag::HelicopterDirectDescent);
@@ -1701,8 +1698,7 @@ static void AircraftEventHandler_Flying(Aircraft *v, const AirportFTAClass *apc)
 					return;
 				}
 				v->cur_speed = tcur_speed;
-				v->subspeed = tsubspeed;
-				v->SyncMotion();
+				v->GetMutableMotion().subspeed = tsubspeed;
 			}
 			current = current->next.get();
 		}
@@ -1897,8 +1893,7 @@ static bool AirportHasBlock(Aircraft *v, const AirportFTA *current_pos, const Ai
 
 		if (st->airport.blocks.Any(blocks)) {
 			v->cur_speed = 0;
-			v->subspeed = 0;
-			v->SyncMotion();
+			v->GetMutableMotion().subspeed = 0;
 			return true;
 		}
 	}
@@ -1939,8 +1934,7 @@ static bool AirportSetBlocks(Aircraft *v, const AirportFTA *current_pos, const A
 		Station *st = Station::Get(v->targetairport);
 		if (st->airport.blocks.Any(blocks)) {
 			v->cur_speed = 0;
-			v->subspeed = 0;
-			v->SyncMotion();
+			v->GetMutableMotion().subspeed = 0;
 			return false;
 		}
 

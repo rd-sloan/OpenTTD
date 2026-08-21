@@ -543,7 +543,7 @@ static uint32_t VehicleGetVariable(Vehicle *v, const VehicleScopeResolver *objec
 		}
 
 		case 0x46: // Motion counter
-			return v->motion_counter;
+			return v->GetMotion().motion_counter;
 
 		case 0x47: { // Vehicle cargo info
 			/* Format: ccccwwtt
@@ -840,7 +840,7 @@ static uint32_t VehicleGetVariable(Vehicle *v, const VehicleScopeResolver *objec
 		case 0x33: return 0; // non-existent high byte of vehstatus
 		case 0x34: return v->type == VehicleType::Aircraft ? (v->cur_speed * 10) / 128 : v->cur_speed;
 		case 0x35: return GB(v->type == VehicleType::Aircraft ? (v->cur_speed * 10) / 128 : v->cur_speed, 8, 8);
-		case 0x36: return v->subspeed;
+		case 0x36: return v->GetMotion().subspeed;
 		case 0x37: return v->acceleration;
 		case 0x38: break; // not implemented
 		case 0x39: return v->cargo_type;
