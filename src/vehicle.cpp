@@ -385,7 +385,7 @@ Vehicle::Vehicle(VehicleID index, VehicleType type) : VehiclePool::PoolItem<&_ve
 	/* Keep the ECS registry in lockstep with the pool. This is the only creation
 	 * hook needed: Pool::CreateAtIndex forwards to this constructor, so savegame
 	 * load comes through here too. @see vehicle_registry.cpp */
-	RegisterVehicleEntity(index);
+	this->entity = RegisterVehicleEntity(index);
 
 	this->type               = type;
 	this->coord.left         = INVALID_COORD;
@@ -738,45 +738,9 @@ VehicleCache &Vehicle::GetMutableVehicleCache()
 	return GetVehicleRegistry().get<VehicleCacheComponent>(GetVehicleEntity(this->index)).cache;
 }
 
-/**
- * Get this vehicle's sub-tile motion accumulators for reading.
- *
- * The component is now the only copy. The members are gone and the save descriptors
- * read this component directly, so there is nothing left to shadow-verify against.
- *
- * @return The motion accumulators.
- */
-const VehicleMotion &Vehicle::GetMotion() const
-{
-	return GetVehicleRegistry().get<VehicleMotion>(GetVehicleEntity(this->index));
-}
-
-/**
- * Get this vehicle's sub-tile motion accumulators for writing.
- * @return The motion accumulators.
- */
-VehicleMotion &Vehicle::GetMutableMotion()
-{
-	return GetVehicleRegistry().get<VehicleMotion>(GetVehicleEntity(this->index));
-}
-
-/**
- * Get this vehicle's world position for reading.
- * @return The position.
- */
-const VehiclePosition &Vehicle::GetPos() const
-{
-	return GetVehicleRegistry().get<VehiclePosition>(GetVehicleEntity(this->index));
-}
-
-/**
- * Get this vehicle's world position for writing.
- * @return The position.
- */
-VehiclePosition &Vehicle::GetMutablePos()
-{
-	return GetVehicleRegistry().get<VehiclePosition>(GetVehicleEntity(this->index));
-}
+/* GetMotion, GetMutableMotion, GetPos and GetMutablePos are defined inline in
+ * vehicle_base.h. They are the hottest accessors in the game and out-of-lining them cost
+ * +90% on the game loop. @see Vehicle::GetMotion */
 
 /**
  * Discard every vehicle's cached colour remapping.
@@ -1208,9 +1172,10 @@ void CallVehicleTicks()
 		if (it.second) v->vehstatus.Reset(VehState::Stopped);
 
 		/* Store the position of the effect as the vehicle pointer will become invalid later */
-		int x = v->GetPos().x_pos;
-		int y = v->GetPos().y_pos;
-		int z = v->GetPos().z_pos;
+		const VehiclePosition &pos = v->GetPos();
+		int x = pos.x_pos;
+		int y = pos.y_pos;
+		int z = pos.z_pos;
 
 		const Company *c = Company::Get(_current_company);
 		SubtractMoneyFromCompany(_current_company, CommandCost(ExpensesType::NewVehicles, (Money)c->settings.engine_renew_money));
@@ -1261,10 +1226,11 @@ static void DoDrawVehicle(const Vehicle *v)
 	}
 
 	StartSpriteCombine();
+	const VehiclePosition &pos = v->GetPos();
 	for (uint i = 0; i < v->sprite_cache.sprite_seq.count; ++i) {
 		PaletteID pal2 = v->sprite_cache.sprite_seq.seq[i].pal;
 		if (!pal2 || v->vehstatus.Test(VehState::Crashed)) pal2 = pal;
-		AddSortableSpriteToDraw(v->sprite_cache.sprite_seq.seq[i].sprite, pal2, v->GetPos().x_pos, v->GetPos().y_pos, v->GetPos().z_pos, v->bounds, shadowed);
+		AddSortableSpriteToDraw(v->sprite_cache.sprite_seq.seq[i].sprite, pal2, pos.x_pos, pos.y_pos, pos.z_pos, v->bounds, shadowed);
 	}
 	EndSpriteCombine();
 }
@@ -1838,8 +1804,10 @@ void Vehicle::UpdateBoundingBoxCoordinates(bool update_cache) const
 	Rect new_coord;
 	this->sprite_cache.sprite_seq.GetBounds(&new_coord);
 
+	const VehiclePosition &pos = this->GetPos();
+
 	/* z-bounds are not used. */
-	Point pt = RemapCoords(this->GetPos().x_pos + this->bounds.origin.x + this->bounds.offset.x, this->GetPos().y_pos + this->bounds.origin.y + this->bounds.offset.y, this->GetPos().z_pos);
+	Point pt = RemapCoords(pos.x_pos + this->bounds.origin.x + this->bounds.offset.x, pos.y_pos + this->bounds.origin.y + this->bounds.offset.y, pos.z_pos);
 	new_coord.left   += pt.x;
 	new_coord.top    += pt.y;
 	new_coord.right  += pt.x + 2 * ZOOM_BASE;
@@ -1847,9 +1815,9 @@ void Vehicle::UpdateBoundingBoxCoordinates(bool update_cache) const
 
 	extern bool _draw_bounding_boxes;
 	if (_draw_bounding_boxes) {
-		int x = this->GetPos().x_pos + this->bounds.origin.x;
-		int y = this->GetPos().y_pos + this->bounds.origin.y;
-		int z = this->GetPos().z_pos + this->bounds.origin.z;
+		int x = pos.x_pos + this->bounds.origin.x;
+		int y = pos.y_pos + this->bounds.origin.y;
+		int z = pos.z_pos + this->bounds.origin.z;
 		new_coord.left   = std::min(new_coord.left, RemapCoords(x + bounds.extent.x, y, z).x);
 		new_coord.right  = std::max(new_coord.right, RemapCoords(x, y + bounds.extent.y, z).x + 1);
 		new_coord.top    = std::min(new_coord.top, RemapCoords(x, y, z + bounds.extent.z).y);
@@ -1941,8 +1909,9 @@ GetNewVehiclePosResult GetNewVehiclePos(const Vehicle *v)
 	}}};
 
 	const Coord2D<int8_t> &coord = delta_coord[v->GetMovingDirection()];
-	int x = v->GetPos().x_pos + coord.x;
-	int y = v->GetPos().y_pos + coord.y;
+	const VehiclePosition &pos = v->GetPos();
+	int x = pos.x_pos + coord.x;
+	int y = pos.y_pos + coord.y;
 
 	GetNewVehiclePosResult gp;
 	gp.x = x;
@@ -1962,13 +1931,15 @@ Direction GetDirectionTowards(const Vehicle *v, int x, int y)
 {
 	int i = 0;
 
-	if (y >= v->GetPos().y_pos) {
-		if (y != v->GetPos().y_pos) i += 3;
+	const VehiclePosition &pos = v->GetPos();
+
+	if (y >= pos.y_pos) {
+		if (y != pos.y_pos) i += 3;
 		i += 3;
 	}
 
-	if (x >= v->GetPos().x_pos) {
-		if (x != v->GetPos().x_pos) i++;
+	if (x >= pos.x_pos) {
+		if (x != pos.x_pos) i++;
 		i++;
 	}
 

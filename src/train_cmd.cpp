@@ -3152,11 +3152,12 @@ static inline void AffectSpeedByZChange(Train *consist, int z_diff)
 
 	const AccelerationSlowdownParams *asp = &_accel_slowdown[static_cast<int>(consist->GetAccelerationType())];
 
+	VehicleMotion &motion = consist->GetMutableMotion();
 	if (z_diff > 0) {
-		consist->GetMutableMotion().cur_speed -= (consist->GetMotion().cur_speed * asp->z_up >> 8);
+		motion.cur_speed -= (motion.cur_speed * asp->z_up >> 8);
 	} else {
-		uint16_t spd = consist->GetMotion().cur_speed + asp->z_down;
-		if (spd <= consist->gcache.cached_max_track_speed) consist->GetMutableMotion().cur_speed = spd;
+		uint16_t spd = motion.cur_speed + asp->z_down;
+		if (spd <= consist->gcache.cached_max_track_speed) motion.cur_speed = spd;
 	}
 }
 
@@ -3275,8 +3276,13 @@ static uint CheckTrainCollision(Vehicle *v, Train *moving_front)
 	/* Do not collide with our own wagons */
 	if (v->First() == moving_front->First()) return 0;
 
-	int x_diff = v->GetPos().x_pos - moving_front->GetPos().x_pos;
-	int y_diff = v->GetPos().y_pos - moving_front->GetPos().y_pos;
+	/* One lookup each, reused by the z check further down. This is the collision test,
+	 * run for every nearby vehicle of every moving train. */
+	const VehiclePosition &v_pos = v->GetPos();
+	const VehiclePosition &front_pos = moving_front->GetPos();
+
+	int x_diff = v_pos.x_pos - front_pos.x_pos;
+	int y_diff = v_pos.y_pos - front_pos.y_pos;
 
 	/* Do fast calculation to check whether trains are not in close vicinity
 	 * and quickly reject trains distant enough for any collision.
@@ -3290,7 +3296,7 @@ static uint CheckTrainCollision(Vehicle *v, Train *moving_front)
 	if (x_diff * x_diff + y_diff * y_diff > min_diff * min_diff) return 0;
 
 	/* Happens when there is a train under bridge next to bridge head */
-	if (abs(v->GetPos().z_pos - moving_front->GetPos().z_pos) > 5) return 0;
+	if (abs(v_pos.z_pos - front_pos.z_pos) > 5) return 0;
 
 	/* Crash both trains. Two statements required to guarantee execution
 	 * order because RandomRange() is involved. */
@@ -3311,7 +3317,8 @@ static bool CheckTrainCollision(Train *moving_front)
 	/* can't collide in depot */
 	if (moving_front->track == Track::Depot) return false;
 
-	assert(moving_front->track == Track::Wormhole || TileVirtXY(moving_front->GetPos().x_pos, moving_front->GetPos().y_pos) == moving_front->tile);
+	const VehiclePosition &front_pos = moving_front->GetPos();
+	assert(moving_front->track == Track::Wormhole || TileVirtXY(front_pos.x_pos, front_pos.y_pos) == moving_front->tile);
 
 	uint num_victims = 0;
 
@@ -3324,7 +3331,7 @@ static bool CheckTrainCollision(Train *moving_front)
 			num_victims += CheckTrainCollision(u, moving_front);
 		}
 	} else {
-		for (Vehicle *u : VehiclesNearTileXY(moving_front->GetPos().x_pos, moving_front->GetPos().y_pos, 7)) {
+		for (Vehicle *u : VehiclesNearTileXY(front_pos.x_pos, front_pos.y_pos, 7)) {
 			num_victims += CheckTrainCollision(u, moving_front);
 		}
 	}
@@ -3441,14 +3448,14 @@ bool TrainController(Train *v, Vehicle *nomove, bool reverse)
 						if (first->flags.Test(VehicleRailFlag::Stuck)) return false;
 
 						if (!HasSignalOnTrackdir(gp.new_tile, ReverseTrackdir(i))) {
-							first->GetMutableMotion().cur_speed = 0;
 							VehicleMotion &motion = first->GetMutableMotion();
+							motion.cur_speed = 0;
 							motion.subspeed = 0;
 							motion.progress = 255; // make sure that every bit of acceleration will hit the signal again, so speed stays 0.
 							if (!_settings_game.pf.reverse_at_signals || ++first->wait_counter < _settings_game.pf.wait_oneway_signal * Ticks::DAY_TICKS * 2) return false;
 						} else if (HasSignalOnTrackdir(gp.new_tile, i)) {
-							first->GetMutableMotion().cur_speed = 0;
 							VehicleMotion &motion = first->GetMutableMotion();
+							motion.cur_speed = 0;
 							motion.subspeed = 0;
 							motion.progress = 255; // make sure that every bit of acceleration will hit the signal again, so speed stays 0.
 							if (!_settings_game.pf.reverse_at_signals || ++first->wait_counter < _settings_game.pf.wait_twoway_signal * Ticks::DAY_TICKS * 2) {
@@ -3556,7 +3563,8 @@ bool TrainController(Train *v, Vehicle *nomove, bool reverse)
 					if (prev == nullptr && _settings_game.vehicle.train_acceleration_model == AccelerationModel::Original) {
 						const AccelerationSlowdownParams *asp = &_accel_slowdown[static_cast<int>(v->GetAccelerationType())];
 						DirDiff diff = DirDifference(v->GetMotion().direction, chosen_dir);
-						v->GetMutableMotion().cur_speed -= (diff == DirDiff::Right45 || diff == DirDiff::Left45 ? asp->small_turn : asp->large_turn) * v->GetMotion().cur_speed >> 8;
+						VehicleMotion &motion = v->GetMutableMotion();
+						motion.cur_speed -= (diff == DirDiff::Right45 || diff == DirDiff::Left45 ? asp->small_turn : asp->large_turn) * motion.cur_speed >> 8;
 					}
 					direction_changed = true;
 					v->SetMovingDirection(chosen_dir);
@@ -3591,8 +3599,9 @@ bool TrainController(Train *v, Vehicle *nomove, bool reverse)
 					gp.old_tile = GetOtherTunnelBridgeEnd(gp.old_tile);
 				}
 			} else {
-				v->GetMutablePos().x_pos = gp.x;
-				v->GetMutablePos().y_pos = gp.y;
+				VehiclePosition &pos = v->GetMutablePos();
+				pos.x_pos = gp.x;
+				pos.y_pos = gp.y;
 				v->UpdatePosition();
 				if (!v->vehstatus.Test(VehState::Hidden)) v->Vehicle::UpdateViewport(true);
 				continue;
@@ -3602,8 +3611,9 @@ bool TrainController(Train *v, Vehicle *nomove, bool reverse)
 		/* update image of train, as well as delta XY */
 		v->UpdateDeltaXY();
 
-		v->GetMutablePos().x_pos = gp.x;
-		v->GetMutablePos().y_pos = gp.y;
+		VehiclePosition &pos = v->GetMutablePos();
+		pos.x_pos = gp.x;
+		pos.y_pos = gp.y;
 		v->UpdatePosition();
 
 		/* update the Z position of the vehicle */
@@ -3611,7 +3621,7 @@ bool TrainController(Train *v, Vehicle *nomove, bool reverse)
 
 		if (prev == nullptr) {
 			/* This is the first vehicle in the train */
-			AffectSpeedByZChange(first, v->GetPos().z_pos - old_z);
+			AffectSpeedByZChange(first, pos.z_pos - old_z);
 		}
 
 		if (update_signals_crossing) {

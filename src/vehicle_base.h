@@ -25,6 +25,7 @@
 #include "network/network.h"
 #include "saveload/saveload_type.h"
 #include "timer/timer_game_calendar.h"
+#include "vehicle_registry.h"
 
 const uint TILE_AXIAL_DISTANCE = 192; ///< Logical length of the tile in any DiagDirection used in vehicle movement.
 const uint TILE_CORNER_DISTANCE = 128; ///< Logical length of the tile corner crossing in any non-diagonal direction used in vehicle movement.
@@ -253,6 +254,20 @@ private:
 	Vehicle *next_shared = nullptr; ///< pointer to the next vehicle that shares the order
 	Vehicle *previous_shared = nullptr; ///< NOSAVE: pointer to the previous vehicle in the shared order chain
 
+	/**
+	 * NOSAVE: this vehicle's registry entity, so component access needs no lookup.
+	 *
+	 * Set once by the constructor and never changed: the handle is stable for the whole
+	 * life of the vehicle, and sorting the registry permutes components rather than
+	 * entity identifiers. Four bytes here buys the removal of the VehicleID indirection
+	 * from every component access, which is a better trade than it looks -- phase 4's
+	 * regression was mostly indirection, not storage.
+	 *
+	 * Not serialised. It is rebuilt by the constructor on load, like the chain pointers
+	 * above, which is why it can live among them.
+	 */
+	entt::entity entity = entt::null;
+
 public:
 	friend void FixOldVehicles(LoadgameState &ls);
 	friend void AfterLoadVehiclesPhase1(bool part_of_load);       ///< So we can set the #previous and #first pointers while loading
@@ -421,15 +436,24 @@ public:
 	 * save descriptors read the component directly. @see saveload/component_sl.h
 	 *
 	 * Resolve ONCE per function, and do not hold the reference across a call that might
-	 * destroy a vehicle or sort the registry. @see GetVehicleCache */
-	const struct VehicleMotion &GetMotion() const;
-	struct VehicleMotion &GetMutableMotion();
+	 * destroy a vehicle or sort the registry. @see GetVehicleCache
+	 *
+	 * Defined inline, and reaching the component through #entity rather than through the
+	 * VehicleID lookup, because these are the hottest accessors in the game. Out of line
+	 * and going via #GetVehicleEntity they cost three opaque calls per field access, which
+	 * phase 4 measured at +90% on the game loop. */
+	const VehicleMotion &GetMotion() const { return GetVehicleRegistry().get<VehicleMotion>(this->entity); }
+	VehicleMotion &GetMutableMotion() { return GetVehicleRegistry().get<VehicleMotion>(this->entity); }
 
-	/* World position, held in the VehiclePosition component. Same rules: resolve ONCE per
-	 * function, and do not hold the reference across a call that might destroy a vehicle
-	 * or sort the registry. */
-	const struct VehiclePosition &GetPos() const;
-	struct VehiclePosition &GetMutablePos();
+	/* World position, held in the VehiclePosition component. Same rules, same reasoning. */
+	const VehiclePosition &GetPos() const { return GetVehicleRegistry().get<VehiclePosition>(this->entity); }
+	VehiclePosition &GetMutablePos() { return GetVehicleRegistry().get<VehiclePosition>(this->entity); }
+
+	/**
+	 * Get the registry entity representing this vehicle.
+	 * @return The entity.
+	 */
+	entt::entity GetEntity() const { return this->entity; }
 
 	/**
 	 * Is this vehicle moving backwards?
@@ -471,7 +495,11 @@ public:
 	 * Get the moving direction of this vehicle chain.
 	 * @return The direction that the vehicle chain is currently moving.
 	 */
-	Direction GetMovingDirection() const { return this->IsDrivingBackwards() ? ReverseDir(this->GetMotion().direction) : this->GetMotion().direction; }
+	Direction GetMovingDirection() const
+	{
+		const Direction dir = this->GetMotion().direction;
+		return this->IsDrivingBackwards() ? ReverseDir(dir) : dir;
+	}
 
 	/**
 	 * Set the movement direction of this vehicle chain.
@@ -1312,16 +1340,17 @@ struct SpecializedVehicle : public Vehicle {
 		 * there won't be enough change in bounding box or offsets to need
 		 * to resolve a new sprite.
 		 */
-		if (this->GetMotion().direction != this->sprite_cache.last_direction || this->sprite_cache.is_viewport_candidate) {
+		const Direction direction = this->GetMotion().direction;
+		if (direction != this->sprite_cache.last_direction || this->sprite_cache.is_viewport_candidate) {
 			VehicleSpriteSeq seq;
 
-			((T*)this)->T::GetImage(this->GetMotion().direction, EngineImageType::OnMap, &seq);
+			((T*)this)->T::GetImage(direction, EngineImageType::OnMap, &seq);
 			if (this->sprite_cache.sprite_seq != seq) {
 				sprite_has_changed = true;
 				this->sprite_cache.sprite_seq = seq;
 			}
 
-			this->sprite_cache.last_direction = this->GetMotion().direction;
+			this->sprite_cache.last_direction = direction;
 			this->sprite_cache.revalidate_before_draw = false;
 		} else {
 			/*

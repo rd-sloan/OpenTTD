@@ -372,7 +372,7 @@ fixes that as a side effect. Current sequence:
 | 1 -- Registry, identity, lifecycle | CLEAR | done |
 | 2 -- First real components | CLEAR | done, re-scoped |
 | 3 -- Shadow mode | CAUTION | done, re-scoped |
-| 4 -- Motion components | CAUTION | **all fields migrated**; large regression to repair |
+| 4 -- Motion components | CAUTION | **all fields migrated**; +42%, partial hoisting left |
 | 5 -- Save staging | CAUTION | done -- no staging struct needed |
 | 6 -- Devirtualising the tick dispatch | DANGER | both dispatch variants, A/B'd |
 | 7 -- Economy and cargo | DANGER | |
@@ -1140,11 +1140,77 @@ measurable, and they change how much hand-hoisting is worth doing at all. Hoisti
 hundreds of sites first would be the expensive way to discover that the constant factor
 was the real problem.
 
-The honest summary of this phase: **the migration is correct and complete, and its
-performance is currently much worse than the plan predicted, for a reason that is fully
-understood and has a concrete fix queued.** Phase 6 was always meant to repay phase 4's
-cost, but it cannot be asked to repay 90% -- most of this has to come back from the
-constant factor before packed iteration is even measurable against it.
+#### The repair, measured: +90% down to +42%
+
+All three steps done, measured separately.
+
+| Step | Minimum | Change |
+| --- | --- | --- |
+| Per-site access, out-of-line accessors | 12,529 ms | -- |
+| + inline registry lookups, cached entity handle | 10,136 ms | **-19%** |
+| + hoisting in the train and shared hot paths | 9,326 ms | **-8%** |
+
+Against the 6,580 ms baseline that is +42%, down from +90%. Correctness held throughout:
+fingerprints unchanged on both fixtures (`015ED3D109C5CCCC` across five samples,
+`29B52DBB6E7D2558` on wentbourne) and 102 of 102 tests.
+
+**Step 1, inlining the lookups.** `VehicleRegistryData` moved into
+`vehicle_registry.h`, the singleton is now an `extern` pointer, and
+`GetVehicleRegistry()` / `GetVehicleEntity()` are inline. The lazy initialisation is
+kept -- a null check rather than a dynamic initialiser -- because the reason for the
+laziness is a static *destruction* order hazard, and a namespace-scope initialiser would
+trade it for a static *initialisation* order hazard. One perfectly predicted branch is
+far cheaper than a guarded static behind a call.
+
+**Step 2, caching the entity handle.** `Vehicle` stores its own `entt::entity`, returned
+by `RegisterVehicleEntity`, so component access skips the `VehicleID → entity` vector
+lookup entirely. The handle is stable for the vehicle's whole life: sorting the registry
+permutes *components*, not entity identifiers. `sizeof(Vehicle)` went back up 528 → 536,
+four bytes plus padding, which is the right trade at this magnitude -- the regression was
+overwhelmingly indirection, not storage.
+
+Together these removed three opaque calls per field access and left one sparse-set
+lookup. That is the 19%.
+
+**Step 3, hoisting.** Partial and deliberately targeted: `train_cmd.cpp`, `vehicle.cpp`,
+`ground_vehicle.hpp` and `vehicle_base.h`, the paths Hilbergen actually exercises since
+it is a trains-only save. The densest win was `GroundVehicle::UpdateZPosition` and its
+inclination sibling, with about twenty accesses to the same component across two
+per-tick functions. Two spots also had a redundant double lookup left over from the
+mechanical pass, where a hoisted reference sat immediately after a `GetMutableMotion()`
+call that should have used it.
+
+`aircraft_cmd.cpp` (111 accesses), `roadveh_cmd.cpp` (82), `disaster_vehicle.cpp` (65)
+and `ship_cmd.cpp` (52) are **not** hoisted. They never execute on Hilbergen, and
+wentbourne -- which does exercise them -- sits at +27% on a single sample against a 10%
+noise band, so there is no reliable figure for them yet. That is the obvious next
+increment, and it needs interleaved sampling to measure.
+
+#### What the repair actually taught
+
+The *order* is the transferable part. The instinct is to hoist first, because "resolve
+once per function" is the rule this document states and phase 2's 74% made memorable.
+But hoisting is hundreds of edits requiring aliasing analysis at every site, while
+**the constant factor was two header changes**. Measuring after steps 1 and 2 showed
+that inlining was worth more than every hoist performed afterwards, and took about
+twenty minutes.
+
+So the rule needs a qualifier. "Resolve once per function" is right, but it is the
+*second* thing to check. First make one access as cheap as it can be -- that multiplies
+through every site whether hoisted or not, and it tells you what the hoisting is worth
+before you commit to doing it. Phase 4 spent a lot of effort converting ~850 sites and
+then recovered half the regression without touching most of them.
+
+A smaller note worth keeping: **the Debug tree got slower at every step of this repair**,
+ending at 272s against 217s before. That is not a contradiction, it is MSVC Debug not
+inlining anything, so the change adds call layers there while removing them in release.
+It is the clearest justification yet for the two-tree setup -- a single Debug-only
+measurement would have rejected the fix that actually worked.
+
+The remaining +42% is now the seam cost the phase was always going to incur: one
+sparse-set lookup per resolved reference against a direct member offset. Phase 6's packed
+walk is what pays that back, and it is now measurable against a sane baseline rather than
+against a self-inflicted constant factor.
 
 #### Sizing, as it stood before the work
 

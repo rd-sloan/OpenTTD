@@ -47,24 +47,11 @@
 
 #include "safeguards.h"
 
-/** The registry, its identity mapping, and the sort state that goes with them. */
-struct VehicleRegistryData {
-	/** The registry itself. Holds one entity per pooled vehicle. */
-	entt::registry registry{};
-
-	/**
-	 * Forward half of the identity mapping, indexed by VehicleID.
-	 * Dense rather than a hash map because VehicleIDs are pool indices and therefore
-	 * already compact. Dead slots hold `entt::null`.
-	 */
-	std::vector<entt::entity> entity_by_vehicle_id{};
-
-	/** Whether the structure changed since the last sort. @see SortVehicleRegistry */
-	bool dirty = false;
-};
+/** @copydoc _vehicle_registry_data */
+VehicleRegistryData *_vehicle_registry_data = nullptr;
 
 /**
- * Access the registry data, creating it on first use.
+ * Create the registry data on first use.
  *
  * Deliberately never freed, following the same reasoning as PoolBase::GetPools(). Static
  * destruction order across translation units is unspecified, so a plain file-scope
@@ -72,35 +59,19 @@ struct VehicleRegistryData {
  * running during teardown. Leaking one allocation that lives until the process exits
  * removes that hazard entirely and is cheaper than trying to reason about the ordering.
  *
- * @return The registry data.
+ * Constructed lazily for the same reason, rather than by a dynamic initialiser on
+ * #_vehicle_registry_data: an initialiser would run at an unspecified point relative to
+ * other translation units' static initialisation, which is the hazard this avoids.
  */
-static VehicleRegistryData &Data()
+void InitVehicleRegistryData()
 {
-	static VehicleRegistryData *data = new VehicleRegistryData();
-	return *data;
+	if (_vehicle_registry_data == nullptr) _vehicle_registry_data = new VehicleRegistryData();
 }
 
-/**
- * Get the registry holding vehicle entities.
- * @return The registry.
- */
-entt::registry &GetVehicleRegistry()
+/** Shorthand for the registry data, matching the name the rest of this file used. */
+static inline VehicleRegistryData &Data()
 {
-	return Data().registry;
-}
-
-/**
- * Get the entity representing a vehicle.
- * @param id The vehicle to look up.
- * @return The entity, or `entt::null` if there is none.
- */
-entt::entity GetVehicleEntity(VehicleID id)
-{
-	const VehicleRegistryData &data = Data();
-
-	const size_t index = id.base();
-	if (index >= data.entity_by_vehicle_id.size()) return entt::null;
-	return data.entity_by_vehicle_id[index];
+	return GetVehicleRegistryData();
 }
 
 /**
@@ -115,8 +86,9 @@ size_t GetVehicleEntityCount()
 /**
  * Create the entity for a newly constructed vehicle.
  * @param id The vehicle that was constructed.
+ * @return The entity, which the vehicle stores so that component access needs no lookup.
  */
-void RegisterVehicleEntity(VehicleID id)
+entt::entity RegisterVehicleEntity(VehicleID id)
 {
 	VehicleRegistryData &data = Data();
 
@@ -140,6 +112,8 @@ void RegisterVehicleEntity(VehicleID id)
 	data.entity_by_vehicle_id[index] = entity;
 
 	data.dirty = true;
+
+	return entity;
 }
 
 /**
