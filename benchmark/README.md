@@ -267,6 +267,33 @@ To do better than 7% on Hilbergen, interleave A and B rather than taking more sa
 each: batch-to-batch drift is the dominant term, and interleaving is the only thing that
 cancels it. Adding samples within a batch narrows the wrong distribution.
 
+### Use the untouched accumulators as a drift control
+
+There is a cheaper trick than interleaving, and it works on a single sample: **compare
+against a subsystem you did not change.** Every run reports `perf.trains`,
+`perf.road_vehicles`, `perf.ships` and `perf.aircraft` separately, so if a change only
+touched aircraft code, the other three are a measurement of the machine.
+
+A worked example, from hoisting the aircraft and road vehicle component accessors:
+
+| Accumulator | Before | After | Change |
+| --- | --- | --- | --- |
+| `game_loop` | 248,614 ms | 238,671 ms | −4.0% |
+| `trains` *(untouched)* | 125,444 ms | 121,039 ms | −3.5% |
+| `ships` *(untouched)* | 8,415 ms | 8,029 ms | −4.6% |
+| `road_vehicles` | 62,874 ms | 59,909 ms | −4.7% |
+| **`aircraft`** | 3,111 ms | 2,719 ms | **−12.6%** |
+
+Read naively that is a 4% win everywhere. Read against the controls, roughly 4% of it is
+drift: aircraft improved about 8–9%, and road vehicles did not move at all. The same run
+of Hilbergen — trains only, and no train code touched — dropped 3.3%, confirming the drift
+independently.
+
+So: pick a fixture that exercises what you changed *and* something you didn't, and read
+the difference between them rather than the absolute numbers. It will not resolve a 1%
+effect, but it turns a single 4-minute wentbourne run into real evidence instead of a
+number inside the noise band.
+
 Discard any sample taken immediately after a build — the first run after a rebuild is
 consistently slow, at 6991 ms against a 6751 ms median above, presumably cold caches.
 

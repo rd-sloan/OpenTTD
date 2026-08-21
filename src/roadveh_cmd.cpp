@@ -821,8 +821,12 @@ static void RoadVehCheckOvertake(RoadVehicle *v, RoadVehicle *u)
 	/* For now, articulated road vehicles can't overtake anything. */
 	if (v->HasArticulatedPart()) return;
 
+	/* One lookup each for the two vehicles involved; both are read several times below. */
+	const VehicleMotion &v_motion = v->GetMotion();
+	const VehicleMotion &u_motion = u->GetMotion();
+
 	/* Vehicles are not driving in same direction || direction is not a diagonal direction */
-	if (v->GetMotion().direction != u->GetMotion().direction || !IsDiagonalDirection(v->GetMotion().direction)) return;
+	if (v_motion.direction != u_motion.direction || !IsDiagonalDirection(v_motion.direction)) return;
 
 	/* Check if vehicle is in a road stop, depot, tunnel or bridge or not on a straight road */
 	if (v->state >= RVSB_IN_ROAD_STOP || !IsStraightRoadTrackdir(static_cast<Trackdir>(v->state & RVSB_TRACKDIR_MASK))) return;
@@ -830,14 +834,14 @@ static void RoadVehCheckOvertake(RoadVehicle *v, RoadVehicle *u)
 	/* Can't overtake a vehicle that is moving faster than us. If the vehicle in front is
 	 * accelerating, take the maximum speed for the comparison, else the current speed.
 	 * Original acceleration always accelerates, so always use the maximum speed. */
-	int u_speed = (_settings_game.vehicle.roadveh_acceleration_model == AccelerationModel::Original || u->GetAcceleration() > 0) ? u->GetCurrentMaxSpeed() : u->GetMotion().cur_speed;
+	int u_speed = (_settings_game.vehicle.roadveh_acceleration_model == AccelerationModel::Original || u->GetAcceleration() > 0) ? u->GetCurrentMaxSpeed() : u_motion.cur_speed;
 	if (u_speed >= v->GetCurrentMaxSpeed() &&
 			!u->vehstatus.Test(VehState::Stopped) &&
-			u->GetMotion().cur_speed != 0) {
+			u_motion.cur_speed != 0) {
 		return;
 	}
 
-	od.trackdir = DiagDirToDiagTrackdir(DirToDiagDir(v->GetMotion().direction));
+	od.trackdir = DiagDirToDiagTrackdir(DirToDiagDir(v_motion.direction));
 
 	/* Are the current and the next tile suitable for overtaking?
 	 *  - Does the track continue along od.trackdir
@@ -848,24 +852,26 @@ static void RoadVehCheckOvertake(RoadVehicle *v, RoadVehicle *u)
 	od.tile = v->tile;
 	if (CheckRoadBlockedForOvertaking(&od)) return;
 
-	od.tile = v->tile + TileOffsByDiagDir(DirToDiagDir(v->GetMotion().direction));
+	od.tile = v->tile + TileOffsByDiagDir(DirToDiagDir(v_motion.direction));
 	if (CheckRoadBlockedForOvertaking(&od)) return;
 
 	/* When the vehicle in front of us is stopped we may only take
 	 * half the time to pass it than when the vehicle is moving. */
-	v->overtaking_ctr = (od.u->GetMotion().cur_speed == 0 || od.u->vehstatus.Test(VehState::Stopped)) ? RV_OVERTAKE_TIMEOUT / 2 : 0;
+	v->overtaking_ctr = (u_motion.cur_speed == 0 || od.u->vehstatus.Test(VehState::Stopped)) ? RV_OVERTAKE_TIMEOUT / 2 : 0;
 	v->overtaking = RVSB_DRIVE_SIDE;
 }
 
 static void RoadZPosAffectSpeed(RoadVehicle *v, int old_z)
 {
-	if (old_z == v->GetPos().z_pos || _settings_game.vehicle.roadveh_acceleration_model != AccelerationModel::Original) return;
+	const int z_pos = v->GetPos().z_pos;
+	if (old_z == z_pos || _settings_game.vehicle.roadveh_acceleration_model != AccelerationModel::Original) return;
 
-	if (old_z < v->GetPos().z_pos) {
-		v->GetMutableMotion().cur_speed = v->GetMotion().cur_speed * 232 / 256; // slow down by ~10%
+	VehicleMotion &motion = v->GetMutableMotion();
+	if (old_z < z_pos) {
+		motion.cur_speed = motion.cur_speed * 232 / 256; // slow down by ~10%
 	} else {
-		uint16_t spd = v->GetMotion().cur_speed + 2;
-		if (spd <= v->gcache.cached_max_track_speed) v->GetMutableMotion().cur_speed = spd;
+		uint16_t spd = motion.cur_speed + 2;
+		if (spd <= v->gcache.cached_max_track_speed) motion.cur_speed = spd;
 	}
 }
 
@@ -1177,8 +1183,9 @@ bool IndividualRoadVehicleController(RoadVehicle *v, const RoadVehicle *prev)
 			return true;
 		}
 
-		v->GetMutablePos().x_pos = gp.x;
-		v->GetMutablePos().y_pos = gp.y;
+		VehiclePosition &pos = v->GetMutablePos();
+		pos.x_pos = gp.x;
+		pos.y_pos = gp.y;
 		v->UpdatePosition();
 		if (!v->vehstatus.Test(VehState::Hidden)) v->Vehicle::UpdateViewport(true);
 		return true;
@@ -1340,12 +1347,14 @@ again:
 				v->First()->CargoChanged();
 			}
 		}
-		if (new_dir != v->GetMotion().direction) {
-			v->GetMutableMotion().direction = new_dir;
-			if (_settings_game.vehicle.roadveh_acceleration_model == AccelerationModel::Original) v->GetMutableMotion().cur_speed -= v->GetMotion().cur_speed >> 2;
+		VehicleMotion &motion = v->GetMutableMotion();
+		if (new_dir != motion.direction) {
+			motion.direction = new_dir;
+			if (_settings_game.vehicle.roadveh_acceleration_model == AccelerationModel::Original) motion.cur_speed -= motion.cur_speed >> 2;
 		}
-		v->GetMutablePos().x_pos = x;
-		v->GetMutablePos().y_pos = y;
+		VehiclePosition &pos = v->GetMutablePos();
+		pos.x_pos = x;
+		pos.y_pos = y;
 		v->UpdatePosition();
 		RoadZPosAffectSpeed(v, v->UpdateInclination(true, true));
 		return true;
@@ -1413,13 +1422,15 @@ again:
 		v->state = to_underlying(dir);
 		v->frame = turn_around_start_frame;
 
-		if (new_dir != v->GetMotion().direction) {
-			v->GetMutableMotion().direction = new_dir;
-			if (_settings_game.vehicle.roadveh_acceleration_model == AccelerationModel::Original) v->GetMutableMotion().cur_speed -= v->GetMotion().cur_speed >> 2;
+		VehicleMotion &motion = v->GetMutableMotion();
+		if (new_dir != motion.direction) {
+			motion.direction = new_dir;
+			if (_settings_game.vehicle.roadveh_acceleration_model == AccelerationModel::Original) motion.cur_speed -= motion.cur_speed >> 2;
 		}
 
-		v->GetMutablePos().x_pos = x;
-		v->GetMutablePos().y_pos = y;
+		VehiclePosition &pos = v->GetMutablePos();
+		pos.x_pos = x;
+		pos.y_pos = y;
 		v->UpdatePosition();
 		RoadZPosAffectSpeed(v, v->UpdateInclination(true, true));
 		return true;
@@ -1467,10 +1478,11 @@ again:
 		}
 	}
 
-	Direction old_dir = v->GetMotion().direction;
+	VehicleMotion &motion = v->GetMutableMotion();
+	Direction old_dir = motion.direction;
 	if (new_dir != old_dir) {
-		v->GetMutableMotion().direction = new_dir;
-		if (_settings_game.vehicle.roadveh_acceleration_model == AccelerationModel::Original) v->GetMutableMotion().cur_speed -= v->GetMotion().cur_speed >> 2;
+		motion.direction = new_dir;
+		if (_settings_game.vehicle.roadveh_acceleration_model == AccelerationModel::Original) motion.cur_speed -= motion.cur_speed >> 2;
 
 		/* Delay the vehicle in curves by making it require one additional frame per turning direction (two in total).
 		 * A vehicle has to spend at least 9 frames on a tile, so the following articulated part can follow.
@@ -1508,8 +1520,9 @@ again:
 				/* Check if next inline bay is free and has compatible road. */
 				if (RoadStop::IsDriveThroughRoadStopContinuation(v->tile, next_tile) && HasTileAnyRoadType(next_tile, v->compatible_roadtypes)) {
 					v->frame++;
-					v->GetMutablePos().x_pos = x;
-					v->GetMutablePos().y_pos = y;
+					VehiclePosition &pos = v->GetMutablePos();
+					pos.x_pos = x;
+					pos.y_pos = y;
 					v->UpdatePosition();
 					RoadZPosAffectSpeed(v, v->UpdateInclination(true, false));
 					return true;

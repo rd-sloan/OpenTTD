@@ -372,7 +372,7 @@ fixes that as a side effect. Current sequence:
 | 1 -- Registry, identity, lifecycle | CLEAR | done |
 | 2 -- First real components | CLEAR | done, re-scoped |
 | 3 -- Shadow mode | CAUTION | done, re-scoped |
-| 4 -- Motion components | CAUTION | **all fields migrated**; +42%, partial hoisting left |
+| 4 -- Motion components | CAUTION | **all fields migrated**; +37%, ships/disasters deferred |
 | 5 -- Save staging | CAUTION | done -- no staging struct needed |
 | 6 -- Devirtualising the tick dispatch | DANGER | both dispatch variants, A/B'd |
 | 7 -- Economy and cargo | DANGER | |
@@ -1144,15 +1144,20 @@ was the real problem.
 
 All three steps done, measured separately.
 
-| Step | Minimum | Change |
+| Step | Hilbergen minimum | Change |
 | --- | --- | --- |
 | Per-site access, out-of-line accessors | 12,529 ms | -- |
 | + inline registry lookups, cached entity handle | 10,136 ms | **-19%** |
 | + hoisting in the train and shared hot paths | 9,326 ms | **-8%** |
+| + hoisting aircraft and road vehicles | 9,017 ms | drift, see below |
 
-Against the 6,580 ms baseline that is +42%, down from +90%. Correctness held throughout:
-fingerprints unchanged on both fixtures (`015ED3D109C5CCCC` across five samples,
-`29B52DBB6E7D2558` on wentbourne) and 102 of 102 tests.
+Against the 6,580 ms baseline that is +37%, down from +90%. The last row is not an
+improvement to Hilbergen -- that fixture is trains-only, so aircraft and road vehicle
+changes cannot affect it, and the 3.3% is machine drift. It is listed because that drift
+is what makes the wentbourne numbers below readable.
+
+Correctness held throughout: fingerprints unchanged on both fixtures
+(`015ED3D109C5CCCC`, `29B52DBB6E7D2558`) and 102 of 102 tests at every step.
 
 **Step 1, inlining the lookups.** `VehicleRegistryData` moved into
 `vehicle_registry.h`, the singleton is now an `extern` pointer, and
@@ -1180,11 +1185,66 @@ per-tick functions. Two spots also had a redundant double lookup left over from 
 mechanical pass, where a hoisted reference sat immediately after a `GetMutableMotion()`
 call that should have used it.
 
-`aircraft_cmd.cpp` (111 accesses), `roadveh_cmd.cpp` (82), `disaster_vehicle.cpp` (65)
-and `ship_cmd.cpp` (52) are **not** hoisted. They never execute on Hilbergen, and
-wentbourne -- which does exercise them -- sits at +27% on a single sample against a 10%
-noise band, so there is no reliable figure for them yet. That is the obvious next
-increment, and it needs interleaved sampling to measure.
+**Step 4, aircraft and road vehicles.** Done as a follow-up, since neither executes on
+Hilbergen. `aircraft_cmd.cpp` went from 111 accesses to 54, `roadveh_cmd.cpp` from 82 to
+65. The wentbourne accumulators, which is the fixture that exercises them:
+
+| Accumulator | Before | After | Change |
+| --- | --- | --- | --- |
+| `game_loop` | 248,614 ms | 238,671 ms | -4.0% |
+| `trains` *(untouched)* | 125,444 ms | 121,039 ms | -3.5% |
+| `ships` *(untouched)* | 8,415 ms | 8,029 ms | -4.6% |
+| `road_vehicles` | 62,874 ms | 59,909 ms | -4.7% |
+| **`aircraft`** | 3,111 ms | 2,719 ms | **-12.6%** |
+
+**The untouched accumulators are the useful part of this table.** Trains and ships moved
+-3.5% and -4.6% despite no code change, so roughly 4% of every figure here is drift, not
+effect. Netting that out: aircraft improved by about 8-9%, and road vehicles did not move
+beyond noise. Hilbergen agrees -- it dropped 9,326 to 9,017 ms on trains-only code that
+was not touched at all, the same favourable drift from the other direction.
+
+That is worth keeping as a technique: **a run that reports per-subsystem timings contains
+its own drift control.** Any subsystem you did not touch is a measurement of the machine,
+so the comparison to make is against *those*, not against an earlier absolute number. It
+is cheaper than interleaving and it works on a single sample.
+
+The asymmetry between aircraft and road vehicles is explained by what was actually
+possible rather than by effort. `AircraftController` took one function-wide pair of
+references for 38 accesses, because nothing in it destroys a vehicle -- the crash path
+only *creates* an effect vehicle, and EnTT's paged storage keeps existing elements put
+across insertion. `IndividualRoadVehicleController` could not: it calls
+`VehicleEnterTile` five times, and while the code immediately after a `CannotEnter`
+result writes to the vehicle's own component (so `v` provably survives), a tile-entry
+handler destroying *some other* vehicle would still relocate elements and dangle the
+reference. That could not be ruled out by inspection, so hoisting there was confined to
+the stretches between those calls -- 17 accesses out of 39.
+
+The lesson is that **the destruction hazard, not the edit count, is what bounds
+hoisting.** A function with forty accesses and no destroying calls is one edit; a
+function with forty accesses and five opaque calls that might destroy something is a
+dozen careful ones with a worse payoff.
+
+#### Deferred: ships and disaster vehicles
+
+`disaster_vehicle.cpp` (65 accesses) and `ship_cmd.cpp` (52) are still per-site, and are
+deliberately left that way for now.
+
+Ships are 3.4% of the wentbourne game loop and disaster vehicles are rare enough not to
+register at all, so the upside is small. More importantly, **phase 6 may make this work
+unnecessary.** Its whole point is to replace per-vehicle registry lookups with a packed
+walk; if the ship controller ends up driven by a view, hoisting inside it now is effort
+spent on code that is about to change shape. Doing it first would be optimising the thing
+being replaced.
+
+So: revisit **after phase 6**, and only if the ship and disaster paths are still
+per-vehicle at that point. If phase 6 converts them, this item disappears. If phase 6
+turns out to be narrower than planned -- trains only, say -- then these two files become
+the obvious cleanup, and the recipe is already established: check for destroying calls
+first, hoist function-wide where there are none, and confine it to barrier-free stretches
+where there are.
+
+Recorded here rather than in phase 6's body because it is phase 4 debt, not phase 6 work,
+and it should not be allowed to look like a prerequisite for starting phase 6.
 
 #### What the repair actually taught
 
@@ -1207,10 +1267,15 @@ inlining anything, so the change adds call layers there while removing them in r
 It is the clearest justification yet for the two-tree setup -- a single Debug-only
 measurement would have rejected the fix that actually worked.
 
-The remaining +42% is now the seam cost the phase was always going to incur: one
+The remaining +37% is now the seam cost the phase was always going to incur: one
 sparse-set lookup per resolved reference against a direct member offset. Phase 6's packed
 walk is what pays that back, and it is now measurable against a sane baseline rather than
 against a self-inflicted constant factor.
+
+Worth noting that wentbourne sits at **+22%** against its own baseline, well below
+Hilbergen's +37%. Different vehicle mix, and wentbourne spends proportionally more time in
+work this phase never touched. Neither figure is wrong; they are answers to slightly
+different questions, which is the argument for keeping both fixtures.
 
 #### Sizing, as it stood before the work
 
