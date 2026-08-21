@@ -37,17 +37,20 @@ struct VehicleColourMap {
 /**
  * Consist-derived values that the simulation reads every tick.
  *
- * Recomputed by the `ConsistChanged` paths whenever a consist's composition changes,
- * and absent from the savegame -- the single mention of `vcache` in `vehicle_sl.cpp` is
- * a read during afterload, not a descriptor.
+ * Recomputed by the `ConsistChanged` paths whenever a consist's composition changes, and
+ * absent from the savegame, which is why this component needed no save staging: the
+ * afterload `ConsistChanged` / `Update*Cache` calls repopulate it the same way they
+ * always populated the member.
  *
  * Unlike the phase 2 components this one **affects the game state**: `cached_max_speed`
  * drives movement and `cached_cargo_age_period` drives cargo ageing in
- * `CallVehicleTicks`. So it is shadow-verified rather than simply moved, and a mismatch
- * would be a desync rather than a cosmetic defect. @see ecs_shadow.h
+ * `CallVehicleTicks`, so a divergence would have been a desync rather than a cosmetic
+ * defect. It was migrated under shadow verification for that reason, and now holds the
+ * only copy. @see ecs_shadow.h
  *
  * Wraps #VehicleCache rather than replacing it, so the type keeps its defaulted
- * `operator<=>` and the shadow check can compare whole structs.
+ * `operator<=>` -- which is what let the shadow check compare whole structs, and what
+ * still lets `cachecheck.cpp` compare a saved copy against a recomputed one.
  */
 struct VehicleCacheComponent {
 	VehicleCache cache{}; ///< The cached consist values.

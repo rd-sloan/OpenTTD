@@ -237,11 +237,11 @@ void Ship::UpdateCache()
 	/* Get speed fraction for the current water type. Aqueducts are always canals. */
 	bool is_ocean = GetEffectiveWaterClass(this->tile) == WaterClass::Sea;
 	uint raw_speed = GetVehicleProperty(this, PROP_SHIP_SPEED, svi->max_speed);
-	this->vcache.cached_max_speed = svi->ApplyWaterClassSpeedFrac(raw_speed, is_ocean);
+	VehicleCache &vcache = this->GetMutableVehicleCache();
+	vcache.cached_max_speed = svi->ApplyWaterClassSpeedFrac(raw_speed, is_ocean);
 
 	/* Update cargo aging period. */
-	this->vcache.cached_cargo_age_period = GetVehicleProperty(this, PROP_SHIP_CARGO_AGE_PERIOD, EngInfo(this->engine_type)->cargo_age_period);
-	this->SyncVehicleCache();
+	vcache.cached_cargo_age_period = GetVehicleProperty(this, PROP_SHIP_CARGO_AGE_PERIOD, EngInfo(this->engine_type)->cargo_age_period);
 
 	this->UpdateVisualEffect();
 }
@@ -417,7 +417,7 @@ static bool CheckShipStayInDepot(Ship *v)
 static uint ShipAccelerate(Vehicle *v)
 {
 	uint speed;
-	speed = std::min<uint>(v->cur_speed + v->acceleration, v->vcache.cached_max_speed);
+	speed = std::min<uint>(v->cur_speed + v->acceleration, v->GetVehicleCache().cached_max_speed);
 	speed = std::min<uint>(speed, v->current_order.GetMaxSpeed() * 2);
 
 	/* updates statusbar only if speed have changed to save CPU time */

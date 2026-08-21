@@ -89,7 +89,7 @@ void CheckCaches()
 		for (const Vehicle *u = v; u != nullptr; u = u->Next()) {
 			FillNewGRFVehicleCache(u);
 			grf_cache.emplace_back(u->grf_cache);
-			veh_cache.emplace_back(u->vcache);
+			veh_cache.emplace_back(u->GetVehicleCache());
 			switch (u->type) {
 				case VehicleType::Train:
 					gro_cache.emplace_back(Train::From(u)->gcache);
@@ -117,7 +117,7 @@ void CheckCaches()
 			if (grf_cache[length] != u->grf_cache) {
 				Debug(desync, 2, "warning: newgrf cache mismatch: type {}, vehicle {}, company {}, unit number {}, wagon {}", v->type, v->index, v->owner, v->unitnumber, length);
 			}
-			if (veh_cache[length] != u->vcache) {
+			if (veh_cache[length] != u->GetVehicleCache()) {
 				Debug(desync, 2, "warning: vehicle cache mismatch: type {}, vehicle {}, company {}, unit number {}, wagon {}", v->type, v->index, v->owner, v->unitnumber, length);
 			}
 			switch (u->type) {

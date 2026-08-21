@@ -95,8 +95,8 @@ struct Aircraft final : public SpecializedVehicle<Aircraft, VehicleType::Aircraf
 	bool IsPrimaryVehicle() const override                  { return this->IsNormalAircraft(); }
 	void GetImage(Direction direction, EngineImageType image_type, VehicleSpriteSeq *result) const override;
 	int GetDisplaySpeed() const override    { return this->cur_speed; }
-	int GetDisplayMaxSpeed() const override { return this->vcache.cached_max_speed; }
-	int GetSpeedOldUnits() const            { return this->vcache.cached_max_speed * 10 / 128; }
+	int GetDisplayMaxSpeed() const override { return this->GetVehicleCache().cached_max_speed; }
+	int GetSpeedOldUnits() const            { return this->GetVehicleCache().cached_max_speed * 10 / 128; }
 	int GetCurrentMaxSpeed() const override { return this->GetSpeedOldUnits(); }
 	Money GetRunningCost() const override;
 

@@ -1742,11 +1742,11 @@ static void LoadUnloadVehicle(Vehicle *front)
 		switch (front->type) {
 			case VehicleType::Train:
 			case VehicleType::Ship:
-				t = front->vcache.cached_max_speed;
+				t = front->GetVehicleCache().cached_max_speed;
 				break;
 
 			case VehicleType::Road:
-				t = front->vcache.cached_max_speed / 2;
+				t = front->GetVehicleCache().cached_max_speed / 2;
 				break;
 
 			case VehicleType::Aircraft:

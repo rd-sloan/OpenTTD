@@ -310,7 +310,6 @@ public:
 	};
 
 	NewGRFCache grf_cache{}; ///< Cache of often used calculated NewGRF values
-	VehicleCache vcache{}; ///< Cache of often used vehicle values.
 
 	GroupID group_id = GroupID::Invalid(); ///< Index of group Pool array
 
@@ -370,15 +369,16 @@ public:
 	void SetColourMap(PaletteID map) const;
 	void InvalidateColourMap() const;
 
-	/* Consist-derived cache, migrating to the VehicleCacheComponent under shadow
-	 * verification. Both copies exist for now; `vcache` below is still authoritative
-	 * for writes, and the read accessor compares the two. @see ecs_shadow.h
+	/* Consist-derived cache, now held only in the VehicleCacheComponent -- the member
+	 * that used to sit alongside #grf_cache is gone.
 	 *
 	 * Resolve this ONCE per function and work through the reference. Calling it per
-	 * field access is what cost 74% of the game loop in phase 2. */
+	 * field access is what cost 74% of the game loop in phase 2. The reference stays
+	 * valid across vehicle *creation* -- EnTT pages its component storage, so existing
+	 * elements never move -- but not across vehicle destruction or a registry sort,
+	 * both of which relocate elements. @see Vehicle::UpdateVisualEffect */
 	const VehicleCache &GetVehicleCache() const;
 	VehicleCache &GetMutableVehicleCache();
-	void SyncVehicleCache();
 
 	/* Sub-tile motion accumulators, migrating to the VehicleMotion component under
 	 * shadow verification. `subspeed` and `motion_counter` below stay authoritative

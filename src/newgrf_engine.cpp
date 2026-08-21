@@ -807,7 +807,7 @@ static uint32_t VehicleGetVariable(Vehicle *v, const VehicleScopeResolver *objec
 					break;
 
 				default:
-					max_speed = v->vcache.cached_max_speed;
+					max_speed = v->GetVehicleCache().cached_max_speed;
 					break;
 			}
 			return (variable - 0x80) == 0x18 ? max_speed : GB(max_speed, 8, 8);

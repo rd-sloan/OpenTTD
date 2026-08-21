@@ -49,6 +49,14 @@ Note that `comparisons` of zero is **not** a pass: it means shadow mode was comp
 which is the normal state of the `build-release` tree. A shadow run needs `-BuildDir
 build`, or a release build with `OTTD_ECS_SHADOW` defined. See `src/ecs_shadow.h`.
 
+**A non-zero `comparisons` with zero `mismatches` is weaker evidence than it looks.** The
+count aggregates a whole field group, and verification only happens at read sites that go
+through the accessor — so a field nothing reads that way contributes no comparisons and
+gets no checking, while the group still reports clean. This is not hypothetical: a missing
+sync on `VehicleCache::cached_vis_effect` survived tens of millions of `vehicle_cache`
+comparisons precisely because no accessor read that field. Before trusting a zero, confirm
+that something actually reads the field you care about through the accessor.
+
 Each `perf.<group>` entry carries five figures, which answer different questions:
 
 | Key | Meaning |
@@ -196,20 +204,37 @@ the game loop on Wentbourne and 79% on Hilbergen.
 
 ## Timing noise
 
-**On a quiet machine the harness is far more precise than first thought.** Repeated
-20,000-tick Hilbergen runs with no other work in progress:
+**Within a batch the harness looks very precise. Across batches it is not.** This
+distinction cost two wrong noise figures before it was understood, so it is worth reading
+before quoting any number.
+
+Repeated 20,000-tick Hilbergen runs, each batch taken back to back with nothing else
+running:
 
 | Set | `perf.game_loop.total_ms` | Spread |
 | --- | --- | --- |
 | Before a change | 6610.3, 6579.9 | 0.5% |
 | After a change | 6772.5, 6734.9, 6746.3 | 0.6% |
+| Eight consecutive runs, no code change | 7152.9 … 7636.5 | **6.8%** |
 
-That is roughly 0.3% either side of the mean, which resolves the 2.4% difference between
-those two sets as a real effect rather than noise.
+The first two batches suggested a 0.3% band. The third batch — same binary, same fixture,
+eight samples instead of two or three — spanned 6.8%. Both readings are accurate about
+what they measured; only the third is a usable noise band.
+
+**Two samples cannot estimate a spread.** They produce exactly one gap, and a small gap
+reads as precision when it is really just one draw. That is how the 0.3% figure got into
+this file: it came from the two-sample row above.
+
+The pattern is that each batch is internally tight but batches sit at different levels —
+consistent with thermal state and background activity drifting over minutes. So
+tight-within-batch is *not* evidence of precision, and it is actively misleading, because
+it invites quoting a three-sample median to four significant figures.
 
 An earlier version of this file claimed a 15% noise band. That figure was measured while
 compiles were running in parallel, and it is badly wrong as general guidance: applying it
-would have dismissed a genuine regression. Machine load, not the harness, was the noise.
+would have dismissed a genuine regression. Machine load, not the harness, was that noise.
+The 0.3% that replaced it was wrong in the other direction. The honest figure for
+Hilbergen at 20,000 ticks is **about 7%**.
 
 **Long runs are much noisier than short ones**, which inverts the usual intuition that a
 longer run averages noise out. The same change measured on both fixtures:
@@ -223,10 +248,19 @@ The wentbourne samples climb monotonically across consecutive runs, which looks 
 thermal throttling. So a 3.5-minute run cannot resolve a few percent, no matter how many
 times it is repeated back to back.
 
-So: **run benchmarks with nothing else running, take three samples, and use the median.**
-On Hilbergen that resolves differences above roughly 1%. On wentbourne, expect no better
+So: **run benchmarks with nothing else running, take at least five samples, and compare
+minima rather than medians.** The minimum is the least-contaminated sample and is the
+standard robust statistic for benchmarks like this; a median tracks the batch's thermal
+level as much as it tracks the code. Three samples are enough only when the change is
+large enough that its sign is obvious.
+
+On Hilbergen that resolves differences above roughly 7%. On wentbourne, expect no better
 than about 10% unless samples are interleaved (A, B, A, B) with a pause between them, so
 prefer Hilbergen for precision and wentbourne for coverage and scale.
+
+To do better than 7% on Hilbergen, interleave A and B rather than taking more samples of
+each: batch-to-batch drift is the dominant term, and interleaving is the only thing that
+cancels it. Adding samples within a batch narrows the wrong distribution.
 
 Discard any sample taken immediately after a build — the first run after a rebuild is
 consistently slow, at 6991 ms against a 6751 ms median above, presumably cold caches.

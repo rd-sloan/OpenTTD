@@ -128,7 +128,7 @@ struct RoadVehicle final : public GroundVehicle<RoadVehicle, VehicleType::Road> 
 	bool IsPrimaryVehicle() const override { return this->IsFrontEngine(); }
 	void GetImage(Direction direction, EngineImageType image_type, VehicleSpriteSeq *result) const override;
 	int GetDisplaySpeed() const override { return this->gcache.last_speed / 2; }
-	int GetDisplayMaxSpeed() const override { return this->vcache.cached_max_speed / 2; }
+	int GetDisplayMaxSpeed() const override { return this->GetVehicleCache().cached_max_speed / 2; }
 	Money GetRunningCost() const override;
 	int GetDisplayImageWidth(Point *offset = nullptr) const;
 	bool IsInDepot() const override { return this->state == RVSB_IN_DEPOT; }

@@ -348,16 +348,21 @@ fixes that as a side effect. Current sequence:
 | 1 -- Registry, identity, lifecycle | CLEAR | done |
 | 2 -- First real components | CLEAR | done, re-scoped |
 | 3 -- Shadow mode | CAUTION | done, re-scoped |
-| 4 -- Motion components | CAUTION | first increment done, blocked on 5 |
+| 4 -- Motion components | CAUTION | `vcache` fully migrated; motion fields blocked on 5 |
 | 5 -- Save staging | CAUTION | next |
 | 6 -- Devirtualising the tick dispatch | DANGER | |
 | 7 -- Economy and cargo | DANGER | |
 | 8 -- Hollowing out `Vehicle` | CAUTION | |
 
-Before phase 5 there is one step available that needs nothing new: `vcache` is not
-serialised, so its commits 2 and 3 can be finished now, deleting the member and
-removing its dual write. It is also the only step currently available that
-*reduces* cost rather than adding it.
+`vcache` is now fully migrated: it is not serialised, so its commits 2 and 3 needed
+nothing from phase 5 and are done. It is the first field group to complete all three
+commits and have its original member deleted.
+
+This document previously predicted that finishing `vcache` would *reduce* cost
+rather than add it. **That prediction was wrong, and the reason is instructive
+enough to be worth stating up front: it never named a mechanism.** Measurement
+found that neither of the two mechanisms a saving would have required actually
+exists here -- see "Why finishing `vcache` did not pay off" below.
 
 ### Phase 0 -- Toolchain and baseline (CLEAR) -- done
 
@@ -846,14 +851,42 @@ exactly where the change was.
 
 **Also corrected: the noise band.** This document previously said absolute timings
 vary by up to 15%. That was measured with compiles running in parallel and is badly
-wrong as guidance -- it would have dismissed this 2.4% regression. On a quiet
-machine repeatability is around 0.3%, and the rule is three samples and a median,
-discarding the first run after a build, which is consistently slow from cold caches.
+wrong as guidance -- it would have dismissed this 2.4% regression.
+
+**Corrected again, later, in the other direction.** The replacement figure of "about
+0.3% on Hilbergen, three samples and a median" was itself derived from two baseline
+runs that happened to land 0.5% apart. Two samples cannot estimate a spread; they
+can only ever produce one gap, and a small gap looks like precision. Eight
+consecutive Hilbergen runs while finishing `vcache` spanned **6.8%** -- 7,153 ms to
+7,637 ms -- with no code change between them.
+
+The pattern across all the batches taken so far is that each batch is internally
+tight (0.5% to 0.9%) but batches sit at different levels, which is what thermal
+state and background activity produce. Tight-within-batch is therefore not evidence
+of precision, and it is actively misleading: it invites quoting a three-sample
+median to four significant figures.
+
+Revised working rule:
+
+- **At least five samples** before quoting a figure; three only for a change big
+  enough that the sign is obvious.
+- **Compare minima, not medians.** The minimum is the least-contaminated sample and
+  is the standard robust statistic for this kind of benchmark; a median tracks the
+  batch's thermal level as much as the code.
+- Discard the first run after a build (cold caches).
+- **Treat anything under about 7% on Hilbergen as unproven** without interleaved
+  A/B sampling.
+
+Applied backwards, this weakens some earlier numbers but does not overturn any:
+phase 3's +2.4%, phase 4's +9.2% and the phase 2 `bounds` +74% were each measured
+within a batch against a baseline from a different batch. Phase 2's +74% and phase
+4's roughly +9% are far enough outside the band to stand. Phase 3's +2.4% is inside
+it and should now be read as "small, sign probably right, magnitude unproven".
 
 **Exit: met.** Shadow mismatches zero on both saves, fingerprints unchanged,
 registry valid, both configurations build, 102 of 102 tests pass. The `vcache`
-member is deliberately still present: shadow mode requires both copies, and
-deleting it is the follow-up once the remaining read sites move over.
+member was deliberately still present at this point, because shadow mode requires
+both copies; it has since been deleted, in phase 4's `vcache` completion.
 
 #### The original phase 3 text, kept for the record
 
@@ -965,16 +998,17 @@ pass, and the regression measured, stated and explained.
 
 #### What is left, and what blocks it
 
-Only commit 1 of the three-commit sequence is done, for this field group. Commit 2
+For the motion fields, only commit 1 of the three-commit sequence is done. Commit 2
 flips reads to the component; commit 3 deletes the member. Both are outstanding,
 and `GetMotion()` currently exists but is called nowhere -- it is the commit 2 tool
 waiting to be used.
 
-Commit 2 is safe **only at sites where verification already runs**, which is three
-sites for motion and two for `vcache`. Zero mismatches across a hundred million
-comparisons proves the copies agree *at those points*, not everywhere: a write site
-missed and then corrected before the next verification point is invisible to the
-check. Extend `Verify` coverage to any site before flipping it.
+Commit 2 is safe **only at sites where verification already runs**. Zero mismatches
+across a hundred million comparisons proves the copies agree *at those points*, not
+everywhere: a write site missed and then corrected before the next verification
+point is invisible to the check. Extend `Verify` coverage to any site before
+flipping it. Finishing `vcache` turned this from a caution into a demonstrated bug
+-- see the next section.
 
 Commit 3 is blocked on the staging mechanism, now phase 5, because `subspeed` and
 `motion_counter` are serialised. The same applies to every field this phase still
@@ -982,6 +1016,121 @@ has to move -- `progress`, `cur_speed`, `direction`, and the three position fiel
 are all serialised -- so **phase 4 cannot be completed before phase 5**.
 
 `sizeof(Vehicle)` went from 544 to 560 bytes, as it must while both copies exist.
+
+#### Completing `vcache`: shadow mode's blind spot, demonstrated
+
+`vcache` is unserialised, so it needed nothing from phase 5 and went all the way to
+commit 3. It is the first field group to complete the sequence, and the first
+`Vehicle` member the migration has actually deleted.
+
+Flipping the reads immediately exposed a real bug in the already-committed phase 4
+work. `Vehicle::UpdateVisualEffect` ends with a conditional fixup for broken NewGRF
+powered wagons:
+
+```cpp
+this->vcache.cached_vis_effect = visual_effect;
+this->SyncVehicleCache();
+
+if (!allow_power_change && powered_before != HasBit(this->vcache.cached_vis_effect, VE_DISABLE_WAGON_POWER)) {
+    ToggleBit(this->vcache.cached_vis_effect, VE_DISABLE_WAGON_POWER);   /* <- no sync after this */
+    ShowNewGrfVehicleError(...);
+}
+```
+
+The `ToggleBit` mutates the member after the sync, so the component kept the
+pre-toggle value indefinitely. Shadow mode reported **zero mismatches** the whole
+time.
+
+The reason is the limitation to internalise from this phase: **shadow mode verifies
+coverage only at read sites that go through the accessor.** `cached_vis_effect` had
+no accessor reads at all, so it had no verification at all -- the field was
+unprotected while sitting inside a field group the report described as clean. Only
+`cached_max_speed` and `cached_cargo_age_period` were genuinely covered, because
+only they were read through `GetVehicleCache()`.
+
+So "zero mismatches" is a statement about read coverage, not about the field group.
+The practical rule: before trusting a shadow result for a field, check that
+something actually reads that field through the accessor. A per-field comparison
+count would make this visible directly, and is worth adding if another field group
+turns out to have partial coverage.
+
+The bug was latent rather than live -- nothing read the component copy, so nothing
+consumed the stale value -- but it would have become a real behaviour change the
+moment commit 2 flipped `train_cmd.cpp`'s powered-wagon check over. It was found by
+reading the write sites while flipping the reads, which is the one point in the
+sequence where every site gets looked at.
+
+#### Why finishing `vcache` did not pay off
+
+Commit 2 flipped 23 read sites; commit 3 converted the write sites, deleted the
+member, and retired the `VehicleCache` shadow check. Correctness held throughout:
+fingerprints unchanged on both fixtures (`015ED3D109C5CCCC`, `29B52DBB6E7D2558`),
+determinism check passing, 102 of 102 tests, and `vehicle_motion` still at zero
+mismatches over 9,117,260 comparisons.
+
+Timings, Hilbergen game loop, 20,000 ticks:
+
+| State | Samples | Minimum | Spread |
+| --- | --- | --- | --- |
+| Phase 0 baseline | 2 | 6,580 ms | 0.5% |
+| Phase 4, motion commit 1 | 3 | 7,182 ms | 0.7% |
+| `vcache` commit 2 | 3 | 7,252 ms | 0.9% |
+| `vcache` commit 3 | 8 | 7,153 ms | 6.8% |
+
+**No saving.** Commit 3's eight-sample range straddles both earlier states, so
+commit 2, commit 3 and the phase 4 increment are indistinguishable from each other
+at this sample size, and all three sit about 9% above baseline.
+
+The prediction of a saving rested on two mechanisms, and measurement found neither:
+
+1. **`sizeof(Vehicle)` did not shrink** -- 560 bytes in Debug and 544 in release,
+   before and after. `sizeof(VehicleCache)` is 6, and the whole 6 bytes were
+   absorbed by alignment padding. Measured offsets after removal: `grf_cache` at
+   440, `group_id` at 464, `sprite_cache` at 468, so 2 bytes of interior padding
+   now sit after `group_id` where none did before. `sprite_cache` is 4-aligned
+   (468 is not a multiple of 8), which fixes the earlier layout: `vcache` at 464,
+   `group_id` at 470, `sprite_cache` at 472, with no padding anywhere. Members
+   after the removal therefore shifted down by 4, not 6, and the tail padded back
+   up to the same total. No struct shrink means no cache-density win.
+2. **The removed dual writes were cold.** Every `SyncVehicleCache()` call sat on a
+   `ConsistChanged` or `Update*Cache` path, which run when a consist's composition
+   changes -- not per tick. Deleting per-tick work would have shown up; deleting
+   cold work does not.
+
+The transferable lesson is about how to predict: **a performance prediction has to
+name its mechanism, and the mechanism has to be checked for existence before the
+prediction is worth recording.** "Deleting a member and its dual write should be
+cheaper" sounds like reasoning but asserts no mechanism. Two minutes with
+`offsetof` and a grep for the sync call sites would have falsified it before any
+code moved. This is the same failure mode as the earlier wrong guesses about tail
+padding and cold sweeps: the measured claims in this document have held up, the
+inferred ones keep not holding up.
+
+What the phase *did* buy is structural rather than numeric: one field group is
+fully migrated, its member is gone, and the shadow scaffolding for it is retired.
+That is the shape every remaining field group has to follow, and it is now known
+to work end to end.
+
+#### Component references are stable across creation, not destruction
+
+Commit 3 needed a mutable component reference held across a NewGRF callback, which
+raised the question of when an EnTT component reference can dangle. Verified
+against `entt/entity/storage.hpp` at 3.16.0 rather than assumed:
+
+- **Insertion is safe.** `assure_at_least` grows a paged vector of page *pointers*
+  and allocates new pages; existing elements never move. A held reference survives
+  vehicle creation.
+- **Removal is the hazard.** `basic_storage::pop` moves the storage's *last*
+  element into the vacated slot before popping, so destroying some other vehicle
+  can silently turn a held reference into a different entity's data.
+- **Sorting relocates elements** for the same reason.
+
+So the rule is narrower than "don't hold references": hold them freely across
+creation, never across vehicle destruction or a registry sort. `UpdateVisualEffect`
+resolves its reference after the callback for that reason, and both the accessor
+declaration and the call site carry the note. An initial draft of that comment said
+"create or destroy", which was wrong on the create half -- worth flagging because a
+hazard note that overstates the risk teaches the wrong model.
 
 Extract the fields the tick loop actually reads -- `x_pos`, `y_pos`, `z_pos`,
 `direction`, `cur_speed`, `subspeed`, `progress`, `tick_counter`,
@@ -1073,22 +1222,44 @@ exactly the access pattern the packed walk exists to remove. Converting the loop
 first would measure packed reads plus scattered writes plus dual-write overhead,
 and produce a number that means very little.
 
-#### A cheap way to de-risk this ordering first
+#### A cheap way to de-risk this ordering first -- now cheaper
 
-`vcache` is **not** serialised, so its commit 3 is available immediately: move its
-remaining reads and delete the member, no staging required. It is also read-only
-in the tick loop, so a view over `VehicleCacheComponent` can be walked with no
-write-back at all.
+`vcache` is **not** serialised, so its commit 3 needed no staging and **is now
+done**: the member is gone and the component holds the only copy. It is also
+read-only in the tick loop, so a view over `VehicleCacheComponent` can be walked
+with no write-back at all.
 
-That makes a partial version of phase 6 possible before this phase: a clean, if
-narrow, measurement of whether packed iteration pays off. Worth doing first if the
-ordering argument above should be tested rather than trusted -- it is a day's work
-against committing to staging on the strength of an argument.
+That leaves a partial version of phase 6 available before this phase, and the
+groundwork for it is already paid for: a clean, if narrow, measurement of whether
+packed iteration pays off, on the one field group that can be measured without any
+write-back contamination.
+
+It is now the recommended next step ahead of staging, for two reasons. The ordering
+argument above is an *inference* -- that a view-iterating loop must write back to
+authoritative members and so loses its locality benefit -- and this document's
+record is that its inferences fail at a decent rate while its measurements hold.
+Finishing `vcache` just added another entry to that ledger. Second, staging is the
+larger and more invasive piece of work, and committing to it on the strength of an
+untested argument is exactly the trade this experiment avoids.
+
+One caveat on what the experiment can show: `vcache` reads are two fields out of a
+6-byte struct, so the packed walk has little data to be dense *about*. A null
+result would be weak evidence against phase 6, while a positive result would be
+strong evidence for it. Worth knowing which way the asymmetry runs before reading
+the number.
 
 **Exit:** standard criteria, plus a save written by the staged build loads in
 unmodified OpenTTD, `subspeed` and `motion_counter` deleted from `Vehicle` with
 shadow mode removed for them, and the resulting `sizeof(Vehicle)` and timing
-change recorded -- this is the phase that should give back part of phase 4's 9.2%.
+change recorded.
+
+On that last point, temper the expectation with what finishing `vcache` measured:
+deleting a member is not automatically a timing win. It gives back the dual-write
+cost only where those writes were hot, and it shrinks `sizeof(Vehicle)` only if the
+bytes were not already absorbable as padding. Check both before predicting -- the
+motion fields are written per tick, so the first mechanism is genuinely present
+here in a way it was not for `vcache`, but the second still needs an `offsetof`
+check rather than an assumption.
 
 ### Phase 6 -- Devirtualising the tick dispatch (DANGER)
 

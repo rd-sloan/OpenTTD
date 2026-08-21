@@ -603,23 +603,22 @@ static void PlayAircraftSound(const Vehicle *v)
  */
 void UpdateAircraftCache(Aircraft *v, bool update_range)
 {
+	VehicleCache &vcache = v->GetMutableVehicleCache();
 	uint max_speed = GetVehicleProperty(v, PROP_AIRCRAFT_SPEED, 0);
 	if (max_speed != 0) {
 		/* Convert from original units to km-ish/h */
 		max_speed = (max_speed * 128) / 10;
 
-		v->vcache.cached_max_speed = max_speed;
+		vcache.cached_max_speed = max_speed;
 	} else {
 		/* Use the default max speed of the vehicle. */
-		v->vcache.cached_max_speed = AircraftVehInfo(v->engine_type)->max_speed;
+		vcache.cached_max_speed = AircraftVehInfo(v->engine_type)->max_speed;
 	}
 
 	/* Update cargo aging period. */
-	v->vcache.cached_cargo_age_period = GetVehicleProperty(v, PROP_AIRCRAFT_CARGO_AGE_PERIOD, EngInfo(v->engine_type)->cargo_age_period);
-	v->SyncVehicleCache();
+	vcache.cached_cargo_age_period = GetVehicleProperty(v, PROP_AIRCRAFT_CARGO_AGE_PERIOD, EngInfo(v->engine_type)->cargo_age_period);
 	Aircraft *u = v->Next(); // Shadow for mail
-	u->vcache.cached_cargo_age_period = GetVehicleProperty(u, PROP_AIRCRAFT_CARGO_AGE_PERIOD, EngInfo(u->engine_type)->cargo_age_period);
-	u->SyncVehicleCache();
+	u->GetMutableVehicleCache().cached_cargo_age_period = GetVehicleProperty(u, PROP_AIRCRAFT_CARGO_AGE_PERIOD, EngInfo(u->engine_type)->cargo_age_period);
 
 	/* Update aircraft range. */
 	if (update_range) {
@@ -668,9 +667,10 @@ static int UpdateAircraftSpeed(Aircraft *v, uint speed_limit = SPEED_LIMIT_NONE,
 		speed_limit = std::min<uint>(speed_limit, SPEED_LIMIT_BROKEN);
 	}
 
-	if (v->vcache.cached_max_speed < speed_limit) {
+	const uint16_t cached_max_speed = v->GetVehicleCache().cached_max_speed;
+	if (cached_max_speed < speed_limit) {
 		if (v->cur_speed < speed_limit) hard_limit = false;
-		speed_limit = v->vcache.cached_max_speed;
+		speed_limit = cached_max_speed;
 	}
 
 	v->VerifyMotion();
@@ -752,7 +752,7 @@ void GetAircraftFlightLevelBounds(const Vehicle *v, int *min_level, int *max_lev
 	}
 
 	/* Make faster planes fly higher so that they can overtake slower ones */
-	base_altitude += std::min(20 * (v->vcache.cached_max_speed / 200) - 90, 0);
+	base_altitude += std::min(20 * (v->GetVehicleCache().cached_max_speed / 200) - 90, 0);
 
 	if (min_level != nullptr) *min_level = base_altitude + AIRCRAFT_MIN_FLYING_ALTITUDE;
 	if (max_level != nullptr) *max_level = base_altitude + AIRCRAFT_MAX_FLYING_ALTITUDE;

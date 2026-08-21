@@ -182,7 +182,7 @@ void UpdateOldAircraft()
 			AircraftLeaveHangar(a, a->direction); // make airplane visible if it was in a depot for example
 			a->vehstatus.Reset(VehState::Stopped); // make airplane moving
 			UpdateAircraftCache(a);
-			a->cur_speed = a->vcache.cached_max_speed; // so aircraft don't have zero speed while in air
+			a->cur_speed = a->GetVehicleCache().cached_max_speed; // so aircraft don't have zero speed while in air
 			if (!a->current_order.IsType(OT_GOTO_STATION) && !a->current_order.IsType(OT_GOTO_DEPOT)) {
 				/* reset current order so aircraft doesn't have invalid "station-only" order */
 				a->current_order.MakeDummy();
@@ -443,7 +443,6 @@ void AfterLoadVehiclesPhase2(bool part_of_load)
 		 * is what found it: no amount of grepping for "->subspeed =" turns up a write
 		 * that happens through a descriptor's address getter. */
 		v->SyncMotion();
-		v->SyncVehicleCache();
 
 		v->trip_occupancy = CalcPercentVehicleFilled(v, nullptr);
 

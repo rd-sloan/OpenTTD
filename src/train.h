@@ -124,7 +124,7 @@ struct Train final : public GroundVehicle<Train, VehicleType::Train> {
 	bool IsPrimaryVehicle() const override { return this->IsFrontEngine(); }
 	void GetImage(Direction direction, EngineImageType image_type, VehicleSpriteSeq *result) const override;
 	int GetDisplaySpeed() const override { return this->gcache.last_speed; }
-	int GetDisplayMaxSpeed() const override { return this->vcache.cached_max_speed; }
+	int GetDisplayMaxSpeed() const override { return this->GetVehicleCache().cached_max_speed; }
 	Money GetRunningCost() const override;
 	int GetCursorImageOffset() const;
 	int GetDisplayImageWidth(Point *offset = nullptr) const;

@@ -166,7 +166,7 @@ void Train::ConsistChanged(ConsistChangeFlags allowed_changes)
 		u->UpdateVisualEffect(true);
 
 		if (rvi_v->pow_wag_power != 0 && rvi_u->railveh_type == RailVehicleType::Wagon &&
-				UsesWagonOverride(u) && !HasBit(u->vcache.cached_vis_effect, VE_DISABLE_WAGON_POWER)) {
+				UsesWagonOverride(u) && !HasBit(u->GetVehicleCache().cached_vis_effect, VE_DISABLE_WAGON_POWER)) {
 			/* wagon is powered */
 			u->flags.Set(VehicleRailFlag::PoweredWagon); // cache 'powered' status
 		} else {
@@ -204,8 +204,7 @@ void Train::ConsistChanged(ConsistChangeFlags allowed_changes)
 			/* Verify capacity hasn't changed. */
 			if (new_cap != u->cargo_cap) ShowNewGrfVehicleError(u->engine_type, STR_NEWGRF_BROKEN, STR_NEWGRF_BROKEN_CAPACITY, GRFBug::VehCapacity, true);
 		}
-		u->vcache.cached_cargo_age_period = GetVehicleProperty(u, PROP_TRAIN_CARGO_AGE_PERIOD, e_u->info.cargo_age_period);
-		u->SyncVehicleCache();
+		u->GetMutableVehicleCache().cached_cargo_age_period = GetVehicleProperty(u, PROP_TRAIN_CARGO_AGE_PERIOD, e_u->info.cargo_age_period);
 
 		/* check the vehicle length (callback) */
 		uint16_t veh_len = CALLBACK_FAILED;
@@ -237,8 +236,7 @@ void Train::ConsistChanged(ConsistChangeFlags allowed_changes)
 	}
 
 	/* store consist weight/max speed in cache */
-	this->vcache.cached_max_speed = max_speed;
-	this->SyncVehicleCache();
+	this->GetMutableVehicleCache().cached_max_speed = max_speed;
 	this->tcache.cached_tilt = train_can_tilt;
 	this->tcache.cached_curve_speed_mod = min_curve_speed_mod;
 	this->tcache.cached_max_curve_speed = this->GetCurveSpeedLimit();

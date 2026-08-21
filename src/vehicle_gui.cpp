@@ -1525,7 +1525,7 @@ static bool VehicleReliabilitySorter(const Vehicle * const &a, const Vehicle * c
 /** Sort vehicles by their max speed. @copydoc GUIList::Sorter */
 static bool VehicleMaxSpeedSorter(const Vehicle * const &a, const Vehicle * const &b)
 {
-	int r = a->vcache.cached_max_speed - b->vcache.cached_max_speed;
+	int r = a->GetVehicleCache().cached_max_speed - b->GetVehicleCache().cached_max_speed;
 	return (r != 0) ? r < 0 : VehicleNumberSorter(a, b);
 }
 

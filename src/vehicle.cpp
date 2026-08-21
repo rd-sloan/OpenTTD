@@ -719,46 +719,23 @@ void Vehicle::InvalidateColourMap() const
 /**
  * Get this vehicle's consist-derived cache for reading.
  *
- * While the migration is in progress this also shadow-verifies the component against
- * the `vcache` member still on this struct, so a divergence is counted rather than
- * silently changing the simulation. @see ecs_shadow.h
+ * The component is now the only copy: the `vcache` member is gone, and with it the
+ * shadow verification that proved the two agreed across 94 million comparisons.
  *
  * @return The cached consist values.
  */
 const VehicleCache &Vehicle::GetVehicleCache() const
 {
-	const VehicleCache &shadow = GetVehicleRegistry().get<VehicleCacheComponent>(GetVehicleEntity(this->index)).cache;
-	return ShadowVerify(ShadowCheck::VehicleCache, this->vcache, shadow);
+	return GetVehicleRegistry().get<VehicleCacheComponent>(GetVehicleEntity(this->index)).cache;
 }
 
 /**
  * Get this vehicle's consist-derived cache for writing.
- *
- * Writes go to the component; the `vcache` member is kept in step by the caller for as
- * long as shadow verification is in place.
- *
  * @return The cached consist values.
  */
 VehicleCache &Vehicle::GetMutableVehicleCache()
 {
 	return GetVehicleRegistry().get<VehicleCacheComponent>(GetVehicleEntity(this->index)).cache;
-}
-
-/**
- * Copy the `vcache` member into the component, keeping the two in step while shadow
- * verification is in place.
- *
- * Called after every write to `vcache`. That is the whole point of the shadow check
- * here: it does not verify a computation, it verifies *coverage*. If a write site was
- * missed, the component goes stale, and the next read reports a mismatch. With
- * forty-seven usage sites across nine files, "did I find them all" is the real risk.
- *
- * Redundant calls are harmless, so it is placed after each individual write rather
- * than once per function, which removes the need to reason about control flow.
- */
-void Vehicle::SyncVehicleCache()
-{
-	this->GetMutableVehicleCache() = this->vcache;
 }
 
 /**
@@ -798,7 +775,11 @@ void Vehicle::VerifyMotion() const
 
 /**
  * Copy the motion members into the component, keeping the two in step while shadow
- * verification is in place. Called after every write. @see SyncVehicleCache
+ * verification is in place. Called after every write, and after a savegame load, which
+ * writes the members through the save descriptors and so bypasses every accessor.
+ *
+ * Redundant calls are harmless, so this sits after each individual write rather than
+ * once per function, which removes the need to reason about control flow.
  */
 void Vehicle::SyncMotion()
 {
@@ -2836,7 +2817,7 @@ CommandCost Vehicle::SendToDepot(DoCommandFlags flags, DepotCommandFlags command
  */
 void Vehicle::UpdateVisualEffect(bool allow_power_change)
 {
-	bool powered_before = HasBit(this->vcache.cached_vis_effect, VE_DISABLE_WAGON_POWER);
+	bool powered_before = HasBit(this->GetVehicleCache().cached_vis_effect, VE_DISABLE_WAGON_POWER);
 	const Engine *e = this->GetEngine();
 
 	/* Evaluate properties */
@@ -2886,11 +2867,21 @@ void Vehicle::UpdateVisualEffect(bool allow_power_change)
 		}
 	}
 
-	this->vcache.cached_vis_effect = visual_effect;
-	this->SyncVehicleCache();
+	/* Resolved here rather than alongside `powered_before` above, to keep the reference's
+	 * lifetime short and clear of the NewGRF callback.
+	 *
+	 * EnTT component storage is a paged vector, so *adding* an entity never moves the
+	 * existing elements -- a held reference survives vehicle creation. Removal is the
+	 * hazard: `entt::basic_storage::pop` moves the storage's last element into the
+	 * vacated slot, so destroying some other vehicle can turn a held reference into a
+	 * different entity's data. Sorting the storage permutes elements for the same
+	 * reason. Keep references short-lived and never hold one across a call that might
+	 * destroy a vehicle. */
+	VehicleCache &vcache = this->GetMutableVehicleCache();
+	vcache.cached_vis_effect = visual_effect;
 
-	if (!allow_power_change && powered_before != HasBit(this->vcache.cached_vis_effect, VE_DISABLE_WAGON_POWER)) {
-		ToggleBit(this->vcache.cached_vis_effect, VE_DISABLE_WAGON_POWER);
+	if (!allow_power_change && powered_before != HasBit(vcache.cached_vis_effect, VE_DISABLE_WAGON_POWER)) {
+		ToggleBit(vcache.cached_vis_effect, VE_DISABLE_WAGON_POWER);
 		ShowNewGrfVehicleError(this->engine_type, STR_NEWGRF_BROKEN, STR_NEWGRF_BROKEN_POWERED_WAGON, GRFBug::VehPoweredWagon, false);
 	}
 }
@@ -3024,15 +3015,16 @@ void Vehicle::ShowVisualEffect() const
 	const Vehicle *v = this;
 
 	do {
-		bool advanced = HasBit(v->vcache.cached_vis_effect, VE_ADVANCED_EFFECT);
-		int effect_offset = GB(v->vcache.cached_vis_effect, VE_OFFSET_START, VE_OFFSET_COUNT) - VE_OFFSET_CENTRE;
+		const uint8_t cached_vis_effect = v->GetVehicleCache().cached_vis_effect;
+		bool advanced = HasBit(cached_vis_effect, VE_ADVANCED_EFFECT);
+		int effect_offset = GB(cached_vis_effect, VE_OFFSET_START, VE_OFFSET_COUNT) - VE_OFFSET_CENTRE;
 		VisualEffectSpawnModel effect_model = VisualEffectSpawnModel::None;
 		if (advanced) {
 			effect_offset = VE_OFFSET_CENTRE;
-			effect_model = static_cast<VisualEffectSpawnModel>(GB(v->vcache.cached_vis_effect, 0, VE_ADVANCED_EFFECT));
+			effect_model = static_cast<VisualEffectSpawnModel>(GB(cached_vis_effect, 0, VE_ADVANCED_EFFECT));
 			if (effect_model >= VisualEffectSpawnModel::End) effect_model = VisualEffectSpawnModel::None; // unknown spawning model
 		} else {
-			effect_model = static_cast<VisualEffectSpawnModel>(GB(v->vcache.cached_vis_effect, VE_TYPE_START, VE_TYPE_COUNT));
+			effect_model = static_cast<VisualEffectSpawnModel>(GB(cached_vis_effect, VE_TYPE_START, VE_TYPE_COUNT));
 			assert(to_underlying(effect_model) != to_underlying(VE_TYPE_DEFAULT)); // should have been resolved by UpdateVisualEffect
 			static_assert(to_underlying(VisualEffectSpawnModel::Steam) == to_underlying(VE_TYPE_STEAM));
 			static_assert(to_underlying(VisualEffectSpawnModel::Diesel) == to_underlying(VE_TYPE_DIESEL));

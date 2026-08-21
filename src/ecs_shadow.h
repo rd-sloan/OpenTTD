@@ -26,6 +26,14 @@
  * `shadow.<name>.mismatches`, so a phase's exit criterion can be checked rather than
  * assumed.
  *
+ * **Know the blind spot.** Verification happens where a read goes through the accessor,
+ * so a field that nothing reads that way is never checked -- while the *group* it belongs
+ * to still reports zero mismatches, because the counters are per group and not per field.
+ * A missing sync on `VehicleCache::cached_vis_effect` survived tens of millions of
+ * `vehicle_cache` comparisons for exactly this reason. Zero mismatches is a statement
+ * about read coverage, not about the field group: before trusting one, check that
+ * something reads the field in question through the accessor.
+ *
  * Enabled alongside asserts by default, because both are correctness tooling rather
  * than something to ship. Define OTTD_ECS_SHADOW explicitly to force it on in a
  * release build, which is worth doing at least once per migrated field: it is the only
@@ -38,7 +46,6 @@
 
 /** The field groups currently under shadow verification. */
 enum class ShadowCheck : uint8_t {
-	VehicleCache, ///< Vehicle::vcache against the VehicleCacheComponent.
 	VehicleMotion, ///< Vehicle::subspeed and ::motion_counter against the VehicleMotion component.
 	End, ///< End of enum, must be last.
 };
