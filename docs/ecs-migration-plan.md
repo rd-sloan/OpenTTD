@@ -330,6 +330,35 @@ Risk labels: `CLEAR` = no game-state exposure, cannot desync.
 `CAUTION` = touches game state, shadow-verified.
 `DANGER` = alters visit order, or deep coupling.
 
+**The order changed after phase 4.** The save staging mechanism was originally
+bundled into the last phase as consolidation; it is really infrastructure that
+phases 4 and 6 both depend on, so it became phase 5 and everything after it moved
+down one. Two things forced it: commit 3 of a field migration is impossible for a
+serialised field without staging, and every field phase 4 still has to move is
+serialised -- and a view-iterating tick loop cannot show a benefit while it still
+has to write back to authoritative members on a 560-byte `Vehicle`.
+
+Incidentally the original order also put a `DANGER` phase before a `CAUTION` one,
+against the risk-ascending principle the rest of the plan follows. The new order
+fixes that as a side effect. Current sequence:
+
+| Phase | Risk | Status |
+| --- | --- | --- |
+| 0 -- Toolchain and baseline | CLEAR | done |
+| 1 -- Registry, identity, lifecycle | CLEAR | done |
+| 2 -- First real components | CLEAR | done, re-scoped |
+| 3 -- Shadow mode | CAUTION | done, re-scoped |
+| 4 -- Motion components | CAUTION | first increment done, blocked on 5 |
+| 5 -- Save staging | CAUTION | next |
+| 6 -- Devirtualising the tick dispatch | DANGER | |
+| 7 -- Economy and cargo | DANGER | |
+| 8 -- Hollowing out `Vehicle` | CAUTION | |
+
+Before phase 5 there is one step available that needs nothing new: `vcache` is not
+serialised, so its commits 2 and 3 can be finished now, deleting the member and
+removing its dual write. It is also the only step currently available that
+*reduces* cost rather than adding it.
+
 ### Phase 0 -- Toolchain and baseline (CLEAR) -- done
 
 No EnTT usage in the game yet, only the ability to use it and the numbers to
@@ -395,7 +424,7 @@ industries:
 Vehicle ticks are 84% of the game loop, and the save runs at 19.3 ticks/s against
 the roughly 33.3 needed for real time, so it is genuinely at the limit rather than
 merely large. Whatever fraction of that 215 s is attributable to memory layout is
-what phases 4 and 5 are competing for.
+what phases 4 and 6 are competing for.
 
 **Read the two normalised columns together, because they disagree.** On the
 corrected asserts-off figures, per part road vehicles look about eight times worse
@@ -407,12 +436,12 @@ pathfinding and order processing once and spreads the cost over sixteen parts; a
 road vehicle bears it alone.
 
 The consequence for this plan is that the two figures answer different questions,
-and phases 4 and 5 care about different ones:
+and phases 4 and 6 care about different ones:
 
 - Phase 4 moves hot fields into packed components, which helps whatever is walked
   per part. The 85,259 parts and the per-part column are the relevant measure, and
   trains dominate the part count by an order of magnitude.
-- Phase 5 devirtualises per-consist decision work, so the per-consist column
+- Phase 6 devirtualises per-consist decision work, so the per-consist column
   governs. Trains lead there too, by a factor of two. Road vehicles remain the
   clear second target -- 28% of the game loop from a fourteenth of the parts -- but
   they are not the near-tie that the assert-on numbers implied.
@@ -442,7 +471,7 @@ Hilbergen, 20,000 ticks, same commit:
 
 So the "trains are 79% of the game loop" figure from phase 0 was partly an
 artefact of assertion checking. The true share is around 70% -- still dominant,
-but nearly ten points lower, and the per-part cost that phases 4 and 5 are trying
+but nearly ten points lower, and the per-part cost that phases 4 and 6 are trying
 to beat is 85 ns rather than 116. Chasing the inflated number would have made any
 improvement look better than it was.
 
@@ -474,7 +503,7 @@ recommendation made earlier in this document:
 
 Per consist, trains are now **2.05x** the cost of road vehicles rather than 1.6x.
 The earlier claim that road vehicles "deserve as much attention as trains" for
-phase 5 was reading assert overhead as vehicle cost. Trains dominate on both
+phase 6 was reading assert overhead as vehicle cost. Trains dominate on both
 denominators; road vehicles are second by a clear margin, not a near tie.
 
 The fingerprint was **identical** across both trees on both saves
@@ -593,8 +622,8 @@ SLE_VAR(Vehicle, sprite_cache.sprite_seq.seq[0].sprite, VarFileType::U16 | VarMe
 Which makes sense in hindsight: effect vehicles (smoke, sparks) and disaster
 vehicles have no engine to regenerate a sprite from, so the sprite id *is* game
 state. Moving `sprite_cache` therefore has save-format contact and violates the
-defining property of this phase, so it is deferred to phase 7 where the staging
-struct technique is already on the table.
+defining property of this phase, so it is deferred to phase 8, which is where the
+cleanup that depends on the staging struct belongs.
 
 **The sweeps are cold, so the headline win was illusory.** `ResetVehicleColourMap`
 is called from a company colour change, company creation and bankruptcy, and one
@@ -826,7 +855,7 @@ registry valid, both configurations build, 102 of 102 tests pass. The `vcache`
 member is deliberately still present: shadow mode requires both copies, and
 deleting it is the follow-up once the remaining read sites move over.
 
-### Phase 3 -- original plan (superseded above)
+#### The original phase 3 text, kept for the record
 
 The same mechanical work, but on fields the simulation reads -- so the canonical
 sort becomes load-bearing and shadow mode comes on.
@@ -894,7 +923,7 @@ Two reasons, and the second matters for how the figure should be read:
   happens twice. When the members are eventually deleted the dual write goes away,
   so the steady-state cost of the seam is lower than 9.2%. This measurement is the
   cost of *migrating*, not the cost of *having migrated*, and the two should not be
-  conflated when judging phase 5.
+  conflated when judging phase 6.
 
 #### Savegame load bypasses every accessor
 
@@ -932,8 +961,27 @@ only after a long run reports zero mismatches.
 
 **Exit: met for this increment.** Shadow mismatches zero on both checks,
 fingerprints unchanged, registry valid, both configurations build, 102 of 102 tests
-pass, and the regression measured, stated and explained. `progress`, `cur_speed`
-and the position fields remain.
+pass, and the regression measured, stated and explained.
+
+#### What is left, and what blocks it
+
+Only commit 1 of the three-commit sequence is done, for this field group. Commit 2
+flips reads to the component; commit 3 deletes the member. Both are outstanding,
+and `GetMotion()` currently exists but is called nowhere -- it is the commit 2 tool
+waiting to be used.
+
+Commit 2 is safe **only at sites where verification already runs**, which is three
+sites for motion and two for `vcache`. Zero mismatches across a hundred million
+comparisons proves the copies agree *at those points*, not everywhere: a write site
+missed and then corrected before the next verification point is invisible to the
+check. Extend `Verify` coverage to any site before flipping it.
+
+Commit 3 is blocked on the staging mechanism, now phase 5, because `subspeed` and
+`motion_counter` are serialised. The same applies to every field this phase still
+has to move -- `progress`, `cur_speed`, `direction`, and the three position fields
+are all serialised -- so **phase 4 cannot be completed before phase 5**.
+
+`sizeof(Vehicle)` went from 544 to 560 bytes, as it must while both copies exist.
 
 Extract the fields the tick loop actually reads -- `x_pos`, `y_pos`, `z_pos`,
 `direction`, `cur_speed`, `subspeed`, `progress`, `tick_counter`,
@@ -964,9 +1012,9 @@ Phase 3 measured the accessor seam at 2.4% for one small struct read once or twi
 per vehicle per tick. Nine motion fields, read and written repeatedly through the
 movement code, will cost more. Moving fields into components does nothing for
 locality while the loop still walks `Vehicle::Iterate()` and reaches into the
-registry per vehicle -- the packed walk that pays for it is phase 5's job.
+registry per vehicle -- the packed walk that pays for it is phase 6's job.
 
-The obvious response is to merge phases 4 and 5 so the net effect is never
+The obvious response is to merge phases 4 and 6 so the net effect is never
 negative. **We are deliberately not doing that.** Keeping them separate makes each
 half independently measurable: phase 4 answers "what does the seam cost?" and phase
 5 answers "what does packed iteration buy?". Merged, only the sum is observable,
@@ -984,7 +1032,7 @@ Two consequences for how this phase is judged:
   and 20% on Hilbergen, wide because it depends on how many functions in the
   movement path end up resolving a reference. Recording the guess first makes the
   result informative either way: well outside that range in either direction means
-  the cost model is wrong and worth understanding before phase 5 obscures it.
+  the cost model is wrong and worth understanding before phase 6 obscures it.
 
 **Exit:** builds in both configurations, both saves load and play, fingerprints
 unchanged, shadow mismatches zero, regression suite green, `sizeof(Vehicle)`
@@ -992,12 +1040,62 @@ reduction recorded, and the four vehicle accumulator timings recorded against
 baseline **with the regression stated explicitly** and compared against the
 predicted range.
 
-### Phase 5 -- Devirtualising the tick dispatch (DANGER)
+### Phase 5 -- The save staging mechanism (CAUTION)
+
+**This phase was moved forward from what used to be phase 7.** It was originally
+bundled with the hollowing-out work as "consolidation", but it is not
+consolidation, it is infrastructure that two later phases depend on. Discovering
+that is what prompted the reordering; the reasoning is recorded below because a
+reader coming to this document fresh will otherwise wonder why staging sits in the
+middle.
+
+Constraint 3.3 explains the mechanism: `SLE_VAR(Vehicle, x_pos, …)` names a
+member, so a field cannot leave `Vehicle` while a descriptor reads it. The answer
+is a staging struct whose members mirror the descriptor names exactly, gathered
+from components before a save and scattered back after a load. The load half
+already exists, in `AfterLoadVehiclesPhase2` -- phase 4 needed it early, because
+savegame load writes members straight through the descriptors and leaves every
+migrated component stale.
+
+#### Why it has to come before the tick loop is converted
+
+Commit 3 of a field migration -- deleting the member -- is impossible for a
+serialised field without this. And every field phase 4 still has to move is
+serialised: `progress`, `cur_speed`, `direction`, and the three position fields.
+So phase 4 cannot finish at all until this lands, and until it does, every
+migrated field stays in dual-write mode paying the cost measured in phase 4.
+
+More sharply, **phase 6 cannot demonstrate its benefit until commit 3 is done.**
+A view-iterating tick loop reads packed components, which is the point -- but
+while the members are still authoritative it must also write back to them, and
+that write-back touches the scattered 560-byte `Vehicle` for every entity. That is
+exactly the access pattern the packed walk exists to remove. Converting the loop
+first would measure packed reads plus scattered writes plus dual-write overhead,
+and produce a number that means very little.
+
+#### A cheap way to de-risk this ordering first
+
+`vcache` is **not** serialised, so its commit 3 is available immediately: move its
+remaining reads and delete the member, no staging required. It is also read-only
+in the tick loop, so a view over `VehicleCacheComponent` can be walked with no
+write-back at all.
+
+That makes a partial version of phase 6 possible before this phase: a clean, if
+narrow, measurement of whether packed iteration pays off. Worth doing first if the
+ordering argument above should be tested rather than trusted -- it is a day's work
+against committing to staging on the strength of an argument.
+
+**Exit:** standard criteria, plus a save written by the staged build loads in
+unmodified OpenTTD, `subspeed` and `motion_counter` deleted from `Vehicle` with
+shadow mode removed for them, and the resulting `sizeof(Vehicle)` and timing
+change recorded -- this is the phase that should give back part of phase 4's 9.2%.
+
+### Phase 6 -- Devirtualising the tick dispatch (DANGER)
 
 This is where phase 4 gets paid for. Phase 4 moves the fields and accepts a
 regression; this phase converts the loop to iterate views, so the registry lookup
 is amortised across a packed walk rather than repeated per vehicle. Judge the two
-together as well as separately: the pair is only worthwhile if phase 5's gain
+together as well as separately: the pair is only worthwhile if phase 6's gain
 exceeds phase 4's loss, and knowing both halves is the point of having run them
 apart.
 
@@ -1025,7 +1123,7 @@ for the typed build.
 Save format must still be byte-identical, both dispatch modes must build and
 play, and A/B timings recorded.
 
-### Phase 6 -- Economy and cargo (DANGER)
+### Phase 7 -- Economy and cargo (DANGER)
 
 `GameLoopEconomy` is a genuine cost centre, but the most entangled target here.
 `LoadUnloadStation()` walks stations and consists together, and `CargoPacket`
@@ -1042,7 +1140,7 @@ Knowing where to stop is part of the exercise.
 **Exit:** standard criteria, plus cargo totals and company balances matching a
 stock run tick-for-tick under the order-preserving dispatch build.
 
-### Phase 7 -- Hollowing out `Vehicle` (CAUTION)
+### Phase 8 -- Hollowing out `Vehicle` (CAUTION)
 
 Consolidation rather than new capability.
 
@@ -1055,9 +1153,10 @@ and 16% of the 552 byte `Vehicle`. Moving it to a component held only by consist
 is the clearest single win available here, and `sizeof.BaseConsist` in the
 benchmark report tracks it.
 
-Formalise the save facade as an explicit staging struct whose members mirror the
-descriptor names exactly, so the coupling between save format and runtime layout
-becomes one documented file instead of an implicit constraint on a live class.
+The staging mechanism that used to live here is now phase 5, because phases 4 and
+6 both depend on it. What remains here is the cleanup it enables: `sprite_cache`,
+deferred from phase 2 because part of it is serialised for effect and disaster
+vehicles, and `BaseConsist` above.
 
 What remains in `Vehicle` is identity, cold accounting, and the intrusive chains
 that the consist logic legitimately needs.
