@@ -39,6 +39,7 @@
 /** The field groups currently under shadow verification. */
 enum class ShadowCheck : uint8_t {
 	VehicleCache, ///< Vehicle::vcache against the VehicleCacheComponent.
+	VehicleMotion, ///< Vehicle::subspeed and ::motion_counter against the VehicleMotion component.
 	End, ///< End of enum, must be last.
 };
 DECLARE_ENUM_AS_SEQUENTIAL(ShadowCheck)

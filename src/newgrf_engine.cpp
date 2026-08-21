@@ -9,6 +9,7 @@
 
 #include "stdafx.h"
 #include "debug.h"
+#include "vehicle_components.h"
 #include "train.h"
 #include "roadveh.h"
 #include "company_func.h"

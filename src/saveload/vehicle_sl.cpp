@@ -436,6 +436,15 @@ void AfterLoadVehiclesPhase2(bool part_of_load)
 	for (Vehicle *v : Vehicle::Iterate()) {
 		assert(v->First() != nullptr);
 
+		/* Savegame load writes the members directly through the save descriptors, which
+		 * bypasses every accessor and sync, so components migrated out of Vehicle start
+		 * out stale. Scatter the loaded values into them here. This is the load half of
+		 * the staging arrangement described in the migration plan, and the shadow check
+		 * is what found it: no amount of grepping for "->subspeed =" turns up a write
+		 * that happens through a descriptor's address getter. */
+		v->SyncMotion();
+		v->SyncVehicleCache();
+
 		v->trip_occupancy = CalcPercentVehicleFilled(v, nullptr);
 
 		switch (v->type) {

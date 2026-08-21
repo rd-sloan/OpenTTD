@@ -134,6 +134,7 @@ void RegisterVehicleEntity(VehicleID id)
 	 * component that only some vehicles need would be better emplaced on demand. */
 	data.registry.emplace<VehicleColourMap>(entity);
 	data.registry.emplace<VehicleCacheComponent>(entity);
+	data.registry.emplace<VehicleMotion>(entity);
 
 	data.entity_by_vehicle_id[index] = entity;
 

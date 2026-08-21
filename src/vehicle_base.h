@@ -380,6 +380,14 @@ public:
 	VehicleCache &GetMutableVehicleCache();
 	void SyncVehicleCache();
 
+	/* Sub-tile motion accumulators, migrating to the VehicleMotion component under
+	 * shadow verification. `subspeed` and `motion_counter` below stay authoritative
+	 * for writes and are what the save descriptors read; SyncMotion keeps the
+	 * component in step. Resolve ONCE per function. @see ecs_shadow.h */
+	const struct VehicleMotion &GetMotion() const;
+	void VerifyMotion() const;
+	void SyncMotion();
+
 	/**
 	 * Is this vehicle moving backwards?
 	 * @return \c true iff the vehicle is moving backwards.

@@ -1609,6 +1609,7 @@ static void MarkTrainAsStuck(Train *consist)
 		/* Stop train */
 		consist->cur_speed = 0;
 		consist->subspeed = 0;
+		consist->SyncMotion();
 		consist->SetLastSpeed();
 
 		SetWindowWidgetDirty(WindowClass::VehicleView, consist->index, WID_VV_START_STOP);
@@ -3445,11 +3446,13 @@ bool TrainController(Train *v, Vehicle *nomove, bool reverse)
 						if (!HasSignalOnTrackdir(gp.new_tile, ReverseTrackdir(i))) {
 							first->cur_speed = 0;
 							first->subspeed = 0;
+							first->SyncMotion();
 							first->progress = 255; // make sure that every bit of acceleration will hit the signal again, so speed stays 0.
 							if (!_settings_game.pf.reverse_at_signals || ++first->wait_counter < _settings_game.pf.wait_oneway_signal * Ticks::DAY_TICKS * 2) return false;
 						} else if (HasSignalOnTrackdir(gp.new_tile, i)) {
 							first->cur_speed = 0;
 							first->subspeed = 0;
+							first->SyncMotion();
 							first->progress = 255; // make sure that every bit of acceleration will hit the signal again, so speed stays 0.
 							if (!_settings_game.pf.reverse_at_signals || ++first->wait_counter < _settings_game.pf.wait_twoway_signal * Ticks::DAY_TICKS * 2) {
 								DiagDirection exitdir = TrackdirToExitdir(i);
@@ -3658,6 +3661,7 @@ reverse_train_direction:
 		first->wait_counter = 0;
 		first->cur_speed = 0;
 		first->subspeed = 0;
+		first->SyncMotion();
 		ReverseTrainDirection(first);
 	}
 
@@ -4032,6 +4036,7 @@ static bool TrainLocoHandler(Train *consist, bool mode)
 		consist->wait_counter = 0;
 		consist->cur_speed = 0;
 		consist->subspeed = 0;
+		consist->SyncMotion();
 		consist->flags.Reset(VehicleRailFlag::LeavingStation);
 		ReverseTrainDirection(consist);
 		return true;

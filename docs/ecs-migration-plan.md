@@ -844,9 +844,96 @@ unpick.
 every benchmark save; two independent runs from the same save produce
 byte-identical output saves.
 
-### Phase 4 -- Motion components (CAUTION)
+### Phase 4 -- Motion components (CAUTION) -- first increment done
 
-The main event, and the reason for the exercise.
+Scoped down on contact. The nine fields the plan names come to roughly 866 usage
+sites across 24 files, and because the once-per-function rule requires judgement at
+each site rather than a rename, that is not one change. Position alone
+(`x_pos`, `y_pos`, `z_pos`) is about 530 sites.
+
+The first increment migrates `subspeed` and `motion_counter` -- 20 sites, chosen
+for the best measurement signal per unit of risk, since both are touched once per
+vehicle per tick in the hottest paths there are (`GroundVehicle::DoUpdateSpeed` and
+`CallVehicleTicks`). `progress` was deferred: 52 sites of which 35 are effect
+vehicle tick handlers, which are 231 of wentbourne's 85,259 vehicles and therefore
+almost no measurement value for a lot of churn.
+
+#### The measured regression
+
+Three samples each on a quiet machine, 20,000 ticks of Hilbergen:
+
+| Build | `GameLoop` samples | Median | Against baseline |
+| --- | --- | --- | --- |
+| Baseline | 6610.3, 6579.9 ms | 6595 ms | |
+| First attempt | 7375.2, 7367.9, 7358.7 ms | 7368 ms | +11.7% |
+| After fixing a bug of mine | 7231.0, 7201.4, 7181.8 ms | 7201 ms | **+9.2%** |
+
+wentbourne came in at 209,862 ms against a 195,001 ms baseline, or +7.6%. That is a
+single sample against a single sample on a fixture whose repeatability is only
+around 10%, so it is consistent with the Hilbergen figure rather than independent
+confirmation of it. Both saves passed the fingerprint gate.
+
+The bug is worth recording. `VerifyMotion` left its body unguarded, so although
+`ShadowVerify` compiles to nothing in a release build, the registry lookup feeding
+it did not -- a release build was paying for verification it was not performing.
+That was about a fifth of the apparent regression. **Guard the whole body, not just
+the comparison.**
+
+So the honest figure is **+9.2% for two fields**, against phase 3's 2.4% for three.
+The prediction recorded before measuring was 5% to 20% for all nine fields; the
+outcome lands inside that range having migrated two of them, which means the cost
+model was wrong -- per-field cost is far higher than a linear scaling from phase 3
+suggested.
+
+Two reasons, and the second matters for how the figure should be read:
+
+- Phase 3's `vcache` accessor was **read-only**. These fields are written, so
+  `SyncMotion` dirties a cache line in the component in addition to the one in
+  `Vehicle`. Two dirty lines per vehicle per tick rather than one clean read.
+- **Shadow mode overstates the end state.** While both copies exist every write
+  happens twice. When the members are eventually deleted the dual write goes away,
+  so the steady-state cost of the seam is lower than 9.2%. This measurement is the
+  cost of *migrating*, not the cost of *having migrated*, and the two should not be
+  conflated when judging phase 5.
+
+#### Savegame load bypasses every accessor
+
+The shadow check earned its keep immediately, and not in the way expected. It
+reported 462 mismatches out of 60.9 million comparisons -- a small, non-zero
+number, which is the most informative kind.
+
+The cause: **savegame load writes the members directly through the save
+descriptors**, whose address getters reach into `Vehicle` without going near an
+accessor or a sync. So every migrated component starts out stale after a load. No
+amount of grepping for `->subspeed =` finds that write, because it is not written
+as one. Fixed by scattering into the components in `AfterLoadVehiclesPhase2`, which
+already sweeps every vehicle; this is the load half of the staging arrangement in
+3.3, arriving earlier than the plan expected.
+
+#### And a mistake the check caught before it shipped
+
+The first attempt conflated commits 1 and 2 of this phase's own three-commit
+sequence. Read-modify-write sites were converted to read the *component* and write
+the *member*:
+
+```c++
+v->motion_counter = v->GetMotion().motion_counter + front->cur_speed; /* wrong */
+```
+
+If the component is stale for any reason, that stale value propagates into
+authoritative state: a reportable coverage gap becomes silent corruption, and the
+safety net becomes the bug. The fingerprint duly changed on all nine values.
+
+The rule the three-commit sequence encodes, made explicit: **while writes are still
+authoritative on `Vehicle`, read sites must read the member and merely *verify* the
+component.** Hence `VerifyMotion()` alongside `GetMotion()` -- verification that
+returns nothing, so it cannot be accidentally consumed. Reads flip to the component
+only after a long run reports zero mismatches.
+
+**Exit: met for this increment.** Shadow mismatches zero on both checks,
+fingerprints unchanged, registry valid, both configurations build, 102 of 102 tests
+pass, and the regression measured, stated and explained. `progress`, `cur_speed`
+and the position fields remain.
 
 Extract the fields the tick loop actually reads -- `x_pos`, `y_pos`, `z_pos`,
 `direction`, `cur_speed`, `subspeed`, `progress`, `tick_counter`,
@@ -871,10 +958,48 @@ them.
 From here they are the staging area described in 3.3, populated at save time
 rather than continuously.
 
-**Exit:** standard criteria, plus the four vehicle accumulator timings recorded
-against baseline, and the `sizeof(Vehicle)` reduction recorded.
+### This phase is expected to be slower, deliberately
+
+Phase 3 measured the accessor seam at 2.4% for one small struct read once or twice
+per vehicle per tick. Nine motion fields, read and written repeatedly through the
+movement code, will cost more. Moving fields into components does nothing for
+locality while the loop still walks `Vehicle::Iterate()` and reaches into the
+registry per vehicle -- the packed walk that pays for it is phase 5's job.
+
+The obvious response is to merge phases 4 and 5 so the net effect is never
+negative. **We are deliberately not doing that.** Keeping them separate makes each
+half independently measurable: phase 4 answers "what does the seam cost?" and phase
+5 answers "what does packed iteration buy?". Merged, only the sum is observable,
+and if the sum disappoints there is no way to tell which half was responsible.
+The regression is the measurement, not a mistake.
+
+Two consequences for how this phase is judged:
+
+- **A slower result is a pass, not a failure.** The exit criteria below record the
+  regression rather than requiring its absence. What would be a failure is a
+  changed fingerprint, a shadow mismatch, or a regression far outside the range
+  below, which would suggest the per-function rule was broken somewhere.
+- **The prediction should be written down before measuring.** Scaling phase 3's
+  2.4% by the number of lookups per vehicle per tick suggests somewhere between 5%
+  and 20% on Hilbergen, wide because it depends on how many functions in the
+  movement path end up resolving a reference. Recording the guess first makes the
+  result informative either way: well outside that range in either direction means
+  the cost model is wrong and worth understanding before phase 5 obscures it.
+
+**Exit:** builds in both configurations, both saves load and play, fingerprints
+unchanged, shadow mismatches zero, regression suite green, `sizeof(Vehicle)`
+reduction recorded, and the four vehicle accumulator timings recorded against
+baseline **with the regression stated explicitly** and compared against the
+predicted range.
 
 ### Phase 5 -- Devirtualising the tick dispatch (DANGER)
+
+This is where phase 4 gets paid for. Phase 4 moves the fields and accepts a
+regression; this phase converts the loop to iterate views, so the registry lookup
+is amortised across a packed walk rather than repeated per vehicle. Judge the two
+together as well as separately: the pair is only worthwhile if phase 5's gain
+exceeds phase 4's loss, and knowing both halves is the point of having run them
+apart.
 
 Replacing `virtual bool Tick()` plus `switch (v->type)` with typed passes is the
 largest structural win available -- and it forces a decision that should be made

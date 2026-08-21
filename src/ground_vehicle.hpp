@@ -11,6 +11,7 @@
 #define GROUND_VEHICLE_HPP
 
 #include "vehicle_base.h"
+#include "vehicle_components.h"
 #include "vehicle_gui.h"
 #include "landscape.h"
 #include "window_func.h"
@@ -373,8 +374,12 @@ protected:
 	 */
 	inline uint DoUpdateSpeed(uint accel, int min_speed, int max_speed)
 	{
+		/* Verify the component, then read the authoritative member. Reads flip over to
+		 * the component only once shadow verification is silent. @see ecs_shadow.h */
+		this->VerifyMotion();
 		uint spd = this->subspeed + accel;
 		this->subspeed = (uint8_t)spd;
+		this->SyncMotion();
 
 		/* When we are going faster than the maximum speed, reduce the speed
 		 * somewhat gradually. But never lower than the maximum speed. */

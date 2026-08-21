@@ -9,6 +9,7 @@
 
 #include "stdafx.h"
 #include "aircraft.h"
+#include "vehicle_components.h"
 #include "landscape.h"
 #include "news_func.h"
 #include "newgrf_engine.h"
@@ -572,6 +573,7 @@ void SetAircraftPosition(Aircraft *v, int x, int y, int z)
 void HandleAircraftEnterHangar(Aircraft *v)
 {
 	v->subspeed = 0;
+	v->SyncMotion();
 	v->progress = 0;
 
 	Aircraft *u = v->Next();
@@ -671,7 +673,9 @@ static int UpdateAircraftSpeed(Aircraft *v, uint speed_limit = SPEED_LIMIT_NONE,
 		speed_limit = v->vcache.cached_max_speed;
 	}
 
+	v->VerifyMotion();
 	v->subspeed = (t = v->subspeed) + (uint8_t)spd;
+	v->SyncMotion();
 
 	/* Aircraft's current speed is used twice so that very fast planes are
 	 * forced to slow down rapidly in the short distance needed. The magic
@@ -1484,6 +1488,7 @@ void AircraftLeaveHangar(Aircraft *v, Direction exit_dir)
 {
 	v->cur_speed = 0;
 	v->subspeed = 0;
+	v->SyncMotion();
 	v->progress = 0;
 	v->direction = exit_dir;
 	v->vehstatus.Reset(VehState::Hidden);
@@ -1697,6 +1702,7 @@ static void AircraftEventHandler_Flying(Aircraft *v, const AirportFTAClass *apc)
 				}
 				v->cur_speed = tcur_speed;
 				v->subspeed = tsubspeed;
+				v->SyncMotion();
 			}
 			current = current->next.get();
 		}
@@ -1892,6 +1898,7 @@ static bool AirportHasBlock(Aircraft *v, const AirportFTA *current_pos, const Ai
 		if (st->airport.blocks.Any(blocks)) {
 			v->cur_speed = 0;
 			v->subspeed = 0;
+			v->SyncMotion();
 			return true;
 		}
 	}
@@ -1933,6 +1940,7 @@ static bool AirportSetBlocks(Aircraft *v, const AirportFTA *current_pos, const A
 		if (st->airport.blocks.Any(blocks)) {
 			v->cur_speed = 0;
 			v->subspeed = 0;
+			v->SyncMotion();
 			return false;
 		}
 
