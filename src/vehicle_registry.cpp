@@ -116,7 +116,7 @@ void ResetVehicleRegistrySortStats()
 	_sort_stats = VehicleRegistrySortStats{};
 }
 
-#ifdef OTTD_ECS_TICK_VARIANT_B
+#ifdef OTTD_ECS_TICK_TYPED_PASSES
 
 /**
  * Attach the per-type identity component that variant B's typed views select on.
@@ -143,7 +143,7 @@ static void EmplaceVehicleTypeRef(entt::registry &registry, entt::entity entity,
 	}
 }
 
-#endif /* OTTD_ECS_TICK_VARIANT_B */
+#endif /* OTTD_ECS_TICK_TYPED_PASSES */
 
 /**
  * Create the entity for a newly constructed vehicle.
@@ -172,7 +172,7 @@ entt::entity RegisterVehicleEntity(VehicleID id, [[maybe_unused]] VehicleType ty
 	data.registry.emplace<VehicleMotion>(entity);
 	data.registry.emplace<VehiclePosition>(entity);
 
-#ifdef OTTD_ECS_TICK_VARIANT_B
+#ifdef OTTD_ECS_TICK_TYPED_PASSES
 	EmplaceVehicleTypeRef(data.registry, entity, id, type);
 #endif
 
@@ -228,12 +228,23 @@ void UnregisterVehicleEntity(VehicleID id)
  * Timed into #_sort_stats. The clock reads sit inside the dirty branch so that the cheap
  * path stays a load, a branch and an increment: measuring the non-sort would cost more
  * than the non-sort does.
+ *
+ * Does nothing at all under variant C, which is the whole of what variant C is.
  */
 void SortVehicleRegistry()
 {
 	VehicleRegistryData &data = Data();
 
 	_sort_stats.calls++;
+
+#ifdef OTTD_ECS_TICK_VARIANT_C
+	/* Variant C abandons canonical order deliberately, so there is nothing to restore.
+	 * The dirty flag is left set: nothing else reads it, and clearing it here would
+	 * suggest a sort had happened. `ecs.sorts` reporting zero is the correct account. */
+	(void)data;
+	return;
+#else
+
 	if (!data.dirty) return;
 
 	const auto start = std::chrono::steady_clock::now();
@@ -250,11 +261,11 @@ void SortVehicleRegistry()
 	data.registry.sort<VehicleMotion, VehicleRef>();
 	data.registry.sort<VehiclePosition, VehicleRef>();
 
-#ifdef OTTD_ECS_TICK_VARIANT_B
+#ifdef OTTD_ECS_TICK_TYPED_PASSES
 	/* The typed storages too, which is what makes variant B deterministic rather than
 	 * history dependent: each pass then visits its type in ascending VehicleID. Note this
 	 * is what the plan assumed variant B could not have -- it can, at the price of keeping
-	 * the sort. Dropping these six calls is what "variant B, unsorted" means. */
+	 * the sort. Not reached under variant C, which returns above. */
 	data.registry.sort<VehicleTypeRef<VehicleType::Train>, VehicleRef>();
 	data.registry.sort<VehicleTypeRef<VehicleType::Road>, VehicleRef>();
 	data.registry.sort<VehicleTypeRef<VehicleType::Ship>, VehicleRef>();
@@ -276,6 +287,8 @@ void SortVehicleRegistry()
 	 * doubly-destroyed entity at the moment it happens rather than much later.
 	 * The O(n) checks live in ValidateVehicleRegistry instead. */
 	assert(GetVehicleEntityCount() == Vehicle::GetNumItems());
+
+#endif /* OTTD_ECS_TICK_VARIANT_C */
 }
 
 /**
@@ -287,6 +300,11 @@ void SortVehicleRegistry()
  *
  * Sorts first, so that the order check verifies EnTT's sort really does produce
  * ascending iteration rather than merely verifying that we sorted at some point.
+ *
+ * The ordering half is skipped under variant C, which abandons canonical order on
+ * purpose. The identity and count checks still apply and still have to hold: what
+ * variant C gives up is *which order* entities come in, not whether the registry and the
+ * pool agree about what exists.
  *
  * @return True if the registry is consistent with the vehicle pool.
  */
@@ -306,6 +324,7 @@ bool ValidateVehicleRegistry()
 		if (registry.get<VehicleRef>(entity).id != v->index) return false;
 	}
 
+#ifndef OTTD_ECS_TICK_VARIANT_C
 	/* Iteration is in ascending VehicleID order, i.e. the same order PoolIterator uses. */
 	bool seen_any = false;
 	VehicleID previous{};
@@ -315,6 +334,7 @@ bool ValidateVehicleRegistry()
 		previous = id;
 		seen_any = true;
 	}
+#endif /* OTTD_ECS_TICK_VARIANT_C */
 
 	return true;
 }

@@ -15,18 +15,37 @@
 #include <entt/entity/registry.hpp>
 
 /**
- * Phase 6 variant selector.
+ * Phase 6 variant selector. Define at most one; neither means variant A.
  *
- * Undefined: variant A, one pass in ascending #VehicleID with the tick handler reached
- * through a type switch. Defined: variant B, one typed pass per vehicle type over a
- * private storage, which changes the interleaving of `Random()` draws and therefore the
- * trajectory a stock savegame continues on. See docs/ecs-migration-plan.md phase 6.
+ * - **A** (neither defined): one pass in ascending #VehicleID, the tick handler reached
+ *   through a type switch. Order-preserving, and the registry is kept sorted.
+ * - **B** (#OTTD_ECS_TICK_VARIANT_B): one typed pass per vehicle type over a private
+ *   storage, registry still sorted. Each pass runs in ascending #VehicleID, so the game
+ *   stays deterministic and resumable; what changes is the interleaving of `Random()`
+ *   draws between types, which diverges from the trajectory a stock savegame continues on.
+ * - **C** (#OTTD_ECS_TICK_VARIANT_C): typed passes as B, but the sort is abandoned
+ *   entirely. Iteration follows raw packed order, which is a function of the whole
+ *   create/destroy history rather than of the live set. This is the only configuration
+ *   that *removes* a cost -- the ordering discipline measured at 10.4% of the Hilbergen
+ *   game loop -- and it is also the only one that is not save-resume equivalent.
  *
- * A compile-time switch rather than a setting because the two variants are being
- * compared, not offered: a runtime branch would put the cost of both in each binary, and
- * a game whose trajectory depends on a setting is worse than one that does not.
+ * Compile-time switches rather than settings because the variants are being compared, not
+ * offered: a runtime branch would put the cost of all three in each binary, and a game
+ * whose trajectory depends on a setting is worse than one that does not.
+ *
+ * See docs/ecs-migration-plan.md phase 6.
  */
 /* #define OTTD_ECS_TICK_VARIANT_B */
+/* #define OTTD_ECS_TICK_VARIANT_C */
+
+#if defined(OTTD_ECS_TICK_VARIANT_B) && defined(OTTD_ECS_TICK_VARIANT_C)
+#	error "Define at most one of OTTD_ECS_TICK_VARIANT_B and OTTD_ECS_TICK_VARIANT_C"
+#endif
+
+/** Whether the tick loop runs one pass per vehicle type, which is what B and C share. */
+#if defined(OTTD_ECS_TICK_VARIANT_B) || defined(OTTD_ECS_TICK_VARIANT_C)
+#	define OTTD_ECS_TICK_TYPED_PASSES
+#endif
 
 /**
  * The stable pool identity of a vehicle entity.

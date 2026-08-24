@@ -1165,7 +1165,7 @@ static void AgeCargoAndPlaySound(T *v)
 	}
 }
 
-#ifdef OTTD_ECS_TICK_VARIANT_B
+#ifdef OTTD_ECS_TICK_TYPED_PASSES
 
 /**
  * Scratch buffer for one typed pass. Reused across ticks and passes so the snapshot below
@@ -1218,7 +1218,7 @@ static void TickVehiclesOfType()
 	}
 }
 
-#endif /* OTTD_ECS_TICK_VARIANT_B */
+#endif /* OTTD_ECS_TICK_TYPED_PASSES */
 
 void CallVehicleTicks()
 {
@@ -1241,7 +1241,7 @@ void CallVehicleTicks()
 	PerformanceAccumulator::Reset(PerformanceElement::GameLoopShips);
 	PerformanceAccumulator::Reset(PerformanceElement::GameLoopAircraft);
 
-#ifdef OTTD_ECS_TICK_VARIANT_B
+#ifdef OTTD_ECS_TICK_TYPED_PASSES
 	/* One pass per type, in VehicleType order. This is the change that breaks continuation
 	 * of a stock savegame: the same vehicles draw from the shared randomiser in a different
 	 * sequence, so the trajectory diverges from tick one. @see docs/ecs-migration-plan.md */
@@ -1272,7 +1272,7 @@ void CallVehicleTicks()
 			case VehicleType::Aircraft: AgeCargoAndPlaySound<Aircraft, VehicleType::Aircraft>(Aircraft::From(v)); break;
 		}
 	}
-#endif /* OTTD_ECS_TICK_VARIANT_B */
+#endif /* OTTD_ECS_TICK_TYPED_PASSES */
 
 	for (auto &it : _vehicles_to_autoreplace) {
 		Vehicle *v = Vehicle::Get(it.first);

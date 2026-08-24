@@ -1693,7 +1693,7 @@ motion fields are written per tick, so the first mechanism is genuinely present
 here in a way it was not for `vcache`, but the second still needs an `offsetof`
 check rather than an assumption.
 
-### Phase 6 -- Devirtualising the tick dispatch (DANGER) -- done, both variants measured
+### Phase 6 -- Devirtualising the tick dispatch (DANGER) -- done, three variants measured
 
 This is where phase 4 gets paid for. Phase 4 moves the fields and accepts a
 regression; this phase converts the loop to iterate views, so the registry lookup
@@ -2081,6 +2081,7 @@ So the correct statement is that there are two variant Bs, and the plan conflate
 
 B-unsorted is the one worth measuring next if anyone wants the real ceiling, because it is
 the only configuration in this whole phase that removes a cost rather than adding one.
+*It was: it is variant C, below, and it is indeed the fastest thing here.*
 
 Two supporting checks, both passed:
 
@@ -2096,6 +2097,91 @@ trajectory of every savegame in existence passes `regression`, `stationlist`, `g
 this; the suite cannot either. **The fingerprint is the only thing in this project that
 catches it**, which is a strong argument for keeping it and a caution against reading a
 green test run as evidence that behaviour is unchanged.
+
+#### Variant C -- typed passes with the sort abandoned
+
+The plan's variant B was really two variants, and the previous section only built one of
+them. Variant C is the other: typed passes exactly as B, but `SortVehicleRegistry()` does
+nothing at all. Iteration follows raw packed order, which is a function of the whole
+create/destroy history rather than of the live set -- the property section 3.1 says the
+codebase cannot give up. It is built here to price that property, not to be adopted.
+
+Selected by `OTTD_ECS_TICK_VARIANT_C`. `ValidateVehicleRegistry` keeps its identity and
+count checks and skips only the ascending-order check: what C gives up is *which order*
+entities arrive in, not whether the registry and the pool agree about what exists. It
+still reports `ecs.registry_valid` 1.
+
+**Hilbergen, five interleaved rounds of three binaries.** This is the fixture where the
+sort is expensive, so it is where C has something to win:
+
+| Variant | `game_loop` median | Normalised to `landscape` | `ecs.sort_total_ms` | vs A | vs phase 0 |
+| --- | --- | --- | --- | --- | --- |
+| A | 9,317 ms | 16.05 | 963 ms | -- | +41.6% |
+| B | 9,737 ms | 16.64 | 1,049 ms | +4.5% | +48.0% |
+| **C** | **8,485 ms** | **14.84** | **0 ms** | **-8.9%** | **+29.0%** |
+
+Spreads within each group were under 1.5%, so this is well clear of the noise floor.
+**Variant C is the fastest configuration this project has produced since phase 0** -- 8.9%
+better than variant A, 12.9% better than variant B, and it takes the cumulative Hilbergen
+regression from +41.6% down to +29.0%.
+
+Almost all of that is the sort: A spends 963 ms sorting and C spends none, against a
+game-loop difference of 832 ms. The typed-pass overhead that made B slower than A is still
+there in C; it is simply outweighed.
+
+**wentbourne, two interleaved rounds.** And here it evaporates:
+
+| Variant | Normalised to `landscape` | vs A |
+| --- | --- | --- |
+| A | 44.49 | -- |
+| B | 46.11 | +3.6% |
+| C | 46.17 | +3.8% |
+
+**C and B are indistinguishable on wentbourne**, which is exactly what 6.1 predicts: the
+sort costs 0.14% of the game loop there, so removing it removes nothing, and what is left
+is variant B's typed-pass tax. This batch was unusually noisy -- variant A's own two
+samples differ by 5.6% and the `landscape` control by 2.4% -- so the per-subsystem split is
+at the edge of what these runs can resolve and only the aggregate is worth quoting.
+
+So the honest summary of variant C is **a fixture-dependent 9% or nothing**, and which one
+you get is decided by the churn rate finding from 6.1 rather than by anything about typed
+passes.
+
+Same supporting checks as B, same results: an exit save written by C loads and runs in a
+variant A binary with its 2,806 parts intact, all three configurations build, and **all
+three pass 102 of 102 tests.** C's fingerprint was stable at `87AFB8A437E2B2F1` across five
+Hilbergen runs and `9FA63EFAD65E1545` across both wentbourne runs.
+
+**That stability is a trap, and it is the clearest demonstration in this project of why the
+harness cannot be trusted alone.** Variant C reproduces its own fingerprint perfectly,
+because every run starts from the same fresh load and therefore evolves the same packed
+order. The thing C actually breaks -- that a game resumed from a savegame continues on a
+different trajectory than one played straight through -- is invisible to every check here,
+including the fingerprint. The plan predicted this in the save-resume section and it is
+now demonstrated: **C looks completely clean and is not.**
+
+#### What the three variants together say
+
+Setting the determinism question aside and reading the numbers as engineering:
+
+- **Devirtualising the dispatch is worth nothing** (A). A switch on a type tag is an
+  indirect branch, same as the vtable it replaced.
+- **Typed passes are worth something only for rare types** (B). Aircraft gained 11% and
+  trains lost 5%, and trains are 88% of the pool.
+- **The ordering discipline is the one real cost, and only on high-churn saves** (C).
+  Removing it is worth 8.9% on Hilbergen and nothing on wentbourne.
+
+The uncomfortable conclusion is that **the largest single win available in this phase came
+from deleting a safety property rather than from anything the ECS layout provides.** The
+packed walk, the typed views, the devirtualised dispatch -- the entire thesis of phase 6 --
+contributed nothing measurable or worse. What moved the number was not sorting.
+
+And there is a cheaper way to get most of it that keeps determinism, which 6.1 already
+identified and this phase did not pursue: the sort is O(n log n) over the whole live set
+every time one smoke puff appears. A structure-aware update -- inserting the handful of new
+entities in place rather than re-sorting everything -- would target the same 963 ms without
+giving up canonical order. That is the follow-up worth doing, and it belongs to the sort
+rather than to the tick loop.
 
 #### The A/B comparison is between two different games
 
