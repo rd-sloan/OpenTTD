@@ -1,0 +1,1148 @@
+<title>OpenTTD ECS Migration</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap">
+
+<style>
+:root {
+  --ground: #E7E9ED;
+  --panel: #F6F7F9;
+  --panel-sunk: #DEE1E7;
+  --ink: #16191F;
+  --ink-soft: #545C6B;
+  --ink-faint: #7D8695;
+  --rule: #C4CAD3;
+  --rule-soft: #D6DAE1;
+  --accent: #1D4E6B;
+  --accent-soft: #E0E8EE;
+  --clear: #2E7D4F;
+  --caution: #A96D14;
+  --danger: #A8352A;
+  --clear-bg: #E2EDE6;
+  --caution-bg: #F2E9D8;
+  --danger-bg: #F2E1DE;
+  --shadow: 0 1px 2px rgba(22, 25, 31, .06), 0 6px 18px -12px rgba(22, 25, 31, .18);
+
+  --step--1: clamp(.78rem, .76rem + .1vw, .84rem);
+  --step-0: clamp(1rem, .97rem + .16vw, 1.09rem);
+  --step-1: clamp(1.18rem, 1.1rem + .35vw, 1.36rem);
+  --step-2: clamp(1.5rem, 1.32rem + .8vw, 2rem);
+  --step-3: clamp(2.1rem, 1.7rem + 1.8vw, 3.2rem);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #14171C;
+    --panel: #1C2027;
+    --panel-sunk: #0F1216;
+    --ink: #E5E8ED;
+    --ink-soft: #A0A8B6;
+    --ink-faint: #737C8B;
+    --rule: #2E343E;
+    --rule-soft: #242A32;
+    --accent: #7FB3CC;
+    --accent-soft: #1E2A33;
+    --clear: #6FBF8E;
+    --caution: #D9A94E;
+    --danger: #DF8479;
+    --clear-bg: #1A2620;
+    --caution-bg: #26200F;
+    --danger-bg: #291917;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 6px 20px -12px rgba(0, 0, 0, .6);
+  }
+}
+
+:root[data-theme="dark"] {
+  --ground: #14171C;
+  --panel: #1C2027;
+  --panel-sunk: #0F1216;
+  --ink: #E5E8ED;
+  --ink-soft: #A0A8B6;
+  --ink-faint: #737C8B;
+  --rule: #2E343E;
+  --rule-soft: #242A32;
+  --accent: #7FB3CC;
+  --accent-soft: #1E2A33;
+  --clear: #6FBF8E;
+  --caution: #D9A94E;
+  --danger: #DF8479;
+  --clear-bg: #1A2620;
+  --caution-bg: #26200F;
+  --danger-bg: #291917;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 6px 20px -12px rgba(0, 0, 0, .6);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: "Source Serif 4", Georgia, "Times New Roman", serif;
+  font-size: var(--step-0);
+  line-height: 1.62;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap {
+  max-width: 60rem;
+  margin: 0 auto;
+  padding: clamp(1.5rem, 4vw, 4rem) clamp(1.1rem, 4vw, 3rem) 6rem;
+}
+
+.prose { max-width: 40rem; }
+
+h1, h2, h3, .eyebrow, .phase-no, th, .aspect-label {
+  font-family: "Barlow Condensed", "Arial Narrow", Arial, sans-serif;
+}
+
+h1 {
+  font-size: var(--step-3);
+  font-weight: 700;
+  line-height: .98;
+  letter-spacing: -.005em;
+  margin: 0 0 .5rem;
+  text-wrap: balance;
+}
+
+h2 {
+  font-size: var(--step-2);
+  font-weight: 600;
+  line-height: 1.06;
+  margin: 0 0 .9rem;
+  text-wrap: balance;
+}
+
+h3 {
+  font-size: var(--step-1);
+  font-weight: 600;
+  line-height: 1.15;
+  margin: 0 0 .4rem;
+  text-wrap: balance;
+}
+
+p { margin: 0 0 1.05em; }
+.prose > :last-child, .panel > :last-child, .phase-body > :last-child { margin-bottom: 0; }
+
+a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+a:focus-visible, summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+.eyebrow {
+  font-size: var(--step--1);
+  font-weight: 600;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin: 0 0 .7rem;
+}
+
+code, .mono, kbd {
+  font-family: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: .86em;
+}
+
+code {
+  background: var(--panel-sunk);
+  padding: .1em .34em;
+  border-radius: 2px;
+  overflow-wrap: break-word;
+}
+
+pre {
+  margin: 0 0 1.05em;
+  padding: .9rem 1rem;
+  background: var(--panel-sunk);
+  border-left: 2px solid var(--accent);
+  overflow-x: auto;
+  font-size: var(--step--1);
+  line-height: 1.55;
+}
+pre code { background: none; padding: 0; font-size: 1em; }
+
+header.masthead {
+  border-bottom: 2px solid var(--ink);
+  padding-bottom: 1.4rem;
+  margin-bottom: 2.4rem;
+}
+
+.standfirst {
+  font-size: var(--step-1);
+  color: var(--ink-soft);
+  max-width: 34rem;
+  margin: .8rem 0 0;
+  text-wrap: pretty;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .4rem 1.6rem;
+  margin-top: 1.4rem;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: var(--step--1);
+  color: var(--ink-faint);
+}
+.meta span strong { color: var(--ink-soft); font-weight: 500; }
+
+section { margin-bottom: 3.4rem; }
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  padding: clamp(1.1rem, 2.5vw, 1.6rem);
+  box-shadow: var(--shadow);
+}
+
+.verdict {
+  display: grid;
+  gap: 1.4rem;
+  grid-template-columns: 1fr;
+  margin-bottom: 1.6rem;
+}
+@media (min-width: 46rem) {
+  .verdict { grid-template-columns: 1.55fr 1fr; align-items: start; }
+}
+
+.scorecard { display: flex; flex-direction: column; gap: 0; }
+.scorecard h3 { margin-bottom: .8rem; }
+.score {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+  padding: .55rem 0;
+  border-bottom: 1px solid var(--rule-soft);
+}
+.score:last-child { border-bottom: 0; }
+.score span { font-size: var(--step--1); color: var(--ink-soft); }
+.score b {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: var(--step-0);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.table-scroll { overflow-x: auto; margin-bottom: 1.05em; }
+table {
+  border-collapse: collapse;
+  width: 100%;
+  min-width: 34rem;
+  font-size: var(--step--1);
+}
+th {
+  text-align: left;
+  font-weight: 600;
+  font-size: var(--step--1);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  border-bottom: 1.5px solid var(--rule);
+  padding: 0 .9rem .45rem 0;
+  white-space: nowrap;
+}
+td {
+  border-bottom: 1px solid var(--rule-soft);
+  padding: .6rem .9rem .6rem 0;
+  vertical-align: top;
+  color: var(--ink-soft);
+}
+td:first-child { color: var(--ink); }
+td.num {
+  font-family: "IBM Plex Mono", monospace;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--ink);
+}
+
+/* --- signal aspect legend --- */
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .8rem 1.8rem;
+  padding: .9rem 1.1rem;
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-left: 2px solid var(--accent);
+  margin-bottom: 2rem;
+}
+.legend div { display: flex; align-items: center; gap: .55rem; font-size: var(--step--1); color: var(--ink-soft); }
+.legend .dot { width: .68rem; height: .68rem; border-radius: 50%; flex: none; }
+.dot.clear { background: var(--clear); }
+.dot.caution { background: var(--caution); }
+.dot.danger { background: var(--danger); }
+
+/* --- phases --- */
+.phase {
+  display: grid;
+  grid-template-columns: 2.6rem 1fr;
+  gap: 0 1.1rem;
+  padding: 1.3rem 0 1.5rem;
+  border-top: 1px solid var(--rule);
+}
+.phase:last-of-type { border-bottom: 1px solid var(--rule); }
+
+.gutter { display: flex; flex-direction: column; align-items: center; gap: .6rem; }
+.phase-no {
+  font-size: var(--step-1);
+  font-weight: 700;
+  line-height: 1;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+.signal {
+  display: flex;
+  flex-direction: column;
+  gap: .3rem;
+  padding: .32rem .26rem;
+  background: var(--panel-sunk);
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+}
+.signal i {
+  width: .5rem;
+  height: .5rem;
+  border-radius: 50%;
+  background: var(--rule);
+  display: block;
+}
+.phase[data-aspect="clear"] .signal i:nth-child(3) { background: var(--clear); box-shadow: 0 0 0 2px var(--clear-bg); }
+.phase[data-aspect="caution"] .signal i:nth-child(2) { background: var(--caution); box-shadow: 0 0 0 2px var(--caution-bg); }
+.phase[data-aspect="danger"] .signal i:nth-child(1) { background: var(--danger); box-shadow: 0 0 0 2px var(--danger-bg); }
+
+.phase-body { min-width: 0; }
+.phase-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: .5rem .9rem;
+  margin-bottom: .55rem;
+}
+.phase-head h3 { margin: 0; }
+.aspect-label {
+  font-size: var(--step--1);
+  font-weight: 600;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  padding: .12rem .5rem;
+  border-radius: 2px;
+  white-space: nowrap;
+}
+.phase[data-aspect="clear"] .aspect-label { color: var(--clear); background: var(--clear-bg); }
+.phase[data-aspect="caution"] .aspect-label { color: var(--caution); background: var(--caution-bg); }
+.phase[data-aspect="danger"] .aspect-label { color: var(--danger); background: var(--danger-bg); }
+
+/* Status, kept visually distinct from the aspect label: aspect encodes risk,
+   this encodes whether the phase has actually been done. */
+.done-tag {
+  font-family: "Barlow Condensed", sans-serif;
+  font-size: var(--step--1);
+  font-weight: 600;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--clear);
+  border: 1px solid var(--clear);
+  padding: .08rem .45rem;
+  border-radius: 2px;
+  white-space: nowrap;
+}
+
+/* Sub-headings inside a phase body, for phases that have accumulated enough
+   measured detail to need internal structure. Deliberately quieter than h3. */
+.phase-body h4 {
+  font-family: "Barlow Condensed", sans-serif;
+  font-size: var(--step-1);
+  font-weight: 600;
+  letter-spacing: .01em;
+  margin: 1.9em 0 .55em;
+  padding-top: .9em;
+  border-top: 1px solid var(--rule);
+  color: var(--ink);
+}
+.phase-body h4:first-of-type { margin-top: 1.6em; }
+
+/* A correction to a claim made earlier on the page. Set back and down so it
+   reads as a footnote to the paragraph above rather than a new point. */
+.aside {
+  font-size: var(--step--1);
+  color: var(--ink-soft);
+  border-left: 2px solid var(--rule);
+  padding-left: .85rem;
+}
+
+.phase-body p, .phase-body ul, .phase-body ol { max-width: 40rem; }
+.phase-body .table-scroll table { min-width: 26rem; }
+ul, ol { margin: 0 0 1.05em; padding-left: 1.2rem; }
+li { margin-bottom: .3rem; }
+li::marker { color: var(--ink-faint); }
+
+.exit {
+  margin-top: .9rem;
+  padding: .6rem .85rem;
+  background: var(--panel-sunk);
+  border-left: 2px solid var(--rule);
+  font-size: var(--step--1);
+  color: var(--ink-soft);
+}
+.exit strong {
+  font-family: "Barlow Condensed", sans-serif;
+  font-weight: 600;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  color: var(--ink);
+  display: block;
+  margin-bottom: .15rem;
+}
+
+.callout {
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+  padding: 1rem 1.15rem;
+  margin: 0 0 1.05em;
+}
+.callout p { max-width: 38rem; }
+.callout .eyebrow { color: var(--accent); margin-bottom: .4rem; }
+
+.two-col { display: grid; gap: 1.4rem; grid-template-columns: 1fr; }
+@media (min-width: 46rem) { .two-col { grid-template-columns: 1fr 1fr; } }
+
+footer {
+  margin-top: 4rem;
+  padding-top: 1.2rem;
+  border-top: 1px solid var(--rule);
+  font-size: var(--step--1);
+  color: var(--ink-faint);
+  max-width: 40rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+</style>
+
+<div class="wrap">
+
+<header class="masthead">
+  <p class="eyebrow">Private fork &middot; architecture study</p>
+  <h1>Migrating OpenTTD to an EnTT registry</h1>
+  <p class="standfirst">A phased plan for moving performance-critical systems onto an entity-component architecture &mdash; without breaking the save format, and leaving the game playable at every stop.</p>
+  <div class="meta">
+    <span><strong>Status</strong> phases 0&ndash;6 done, three dispatch variants measured</span>
+    <span><strong>Target</strong> win64 only</span>
+    <span><strong>Library</strong> EnTT 3.16.0 (vcpkg)</span>
+    <span><strong>Baseline</strong> master @ 3a33cd64c9</span>
+  </div>
+</header>
+
+<section>
+  <h2>Verdict: yes for targeted extraction, no for wholesale conversion</h2>
+  <div class="verdict">
+    <div class="prose">
+      <p>OpenTTD is an unusually good <em>teaching</em> subject, because it has already independently invented half of an ECS and then stopped. The pool system in <code>src/core/pool_type.hpp</code> is a slotmap: stable integer handles (<code>PoolID</code>), O(1) lookup by index, a free-slot bitmap, and iteration that walks live entries in ascending index order. That is the entity half, and it is genuinely good.</p>
+      <p>What it lacks is the component half. <code>Vehicle</code> is a single struct carrying roughly ninety fields, an embedded <code>VehicleCargoList</code>, an embedded <code>Order</code>, three separate cache sub-structs, six intrusive pointers, a vtable, and <code>Money</code> accounting fields &mdash; all resident whether or not the current operation touches them. The per-tick loop reads perhaps twenty bytes of that object.</p>
+      <p>So the win is real and locatable. But a full conversion is not on the table: <code>Vehicle</code> is referenced from 281 files by 1051 raw <code>Vehicle *</code> declarations, and the save format is bound field-by-field to its member layout. The workable shape is a <strong>parallel registry</strong> that holds hot data alongside the existing pool, with hot loops moved over one at a time.</p>
+    </div>
+    <div class="panel scorecard">
+      <h3>Blast radius, measured</h3>
+      <div class="score"><span>Files referencing <code>Vehicle</code></span><b>281</b></div>
+      <div class="score"><span>Raw <code>Vehicle *</code> declarations</span><b>1051</b></div>
+      <div class="score"><span>Full-pool sweeps (<code>::Iterate()</code>)</span><b>143</b></div>
+      <div class="score"><span>&nbsp;&nbsp;&mdash; untyped / typed</span><b>95 / 48</b></div>
+      <div class="score"><span>Field reads in <code>newgrf_engine.cpp</code></span><b>201</b></div>
+      <div class="score"><span>Lines in core vehicle TUs</span><b>~21,300</b></div>
+    </div>
+  </div>
+
+  <h3>What the code says about where the time goes</h3>
+  <p class="prose">You do not have to guess at the hot systems, because OpenTTD instruments them itself. <code>PerformanceElement</code> in <code>src/framerate_type.h</code> enumerates exactly the loops an ECS targets &mdash; and the vehicle categories are accumulators, meaning they were split out precisely because they dominate.</p>
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr><th>Instrumented element</th><th>Backing loop</th><th>ECS fit</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>GameLoopTrains</code> &middot; <code>RoadVehicles</code> &middot; <code>Ships</code> &middot; <code>Aircraft</code></td><td><code>CallVehicleTicks()</code>, <code>vehicle.cpp:985</code></td><td class="num">Strong</td></tr>
+        <tr><td><code>GameLoopEconomy</code></td><td><code>LoadUnloadStation()</code> per station, cargo aging</td><td class="num">Moderate</td></tr>
+        <tr><td><code>ViewportDrawing</code></td><td>sprite cache, viewport hash chains</td><td class="num">Strong</td></tr>
+        <tr><td><code>GameLoopLandscape</code></td><td>tile-driven, not pooled objects</td><td class="num">Poor</td></tr>
+        <tr><td><code>GameLoopLinkGraph</code></td><td>already a separate job on its own thread</td><td class="num">Poor</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="prose">The single most telling detail is inside <code>CallVehicleTicks()</code>: it calls <code>virtual bool Tick()</code> on every vehicle, then immediately runs a <code>switch (v-&gt;type)</code> over the same object. Virtual dispatch <em>and</em> a type switch, per vehicle, per tick. That is a textbook ECS target sitting in plain sight.</p>
+  <p class="prose aside"><strong>It was a textbook target and it was worth nothing.</strong> Phase 6 removed the virtual dispatch and measured zero change on both fixtures, then replaced the whole loop with typed passes and measured a 4% <em>loss</em>. The paragraph above is kept because it is the single most confident claim on this page and the clearest thing measurement has overturned. Diagnosing a hot loop by reading it finds what is ugly, not what is expensive.</p>
+</section>
+
+<section>
+  <h2>Three constraints that shape everything</h2>
+  <p class="prose">These are not style preferences. Each one eliminates specific EnTT features, and getting them wrong produces bugs that only appear in multiplayer or on reload &mdash; the worst possible failure mode to debug.</p>
+
+  <h3>1. Canonical iteration order</h3>
+  <p class="prose">OpenTTD needs two kinds of determinism. Every client must evolve the game state identically, and <em>a savegame resumed must evolve identically to a run that was never saved</em> &mdash; the second is what makes desync replay and mid-game joins work at all.</p>
+  <p class="prose">Today's pool iteration satisfies both trivially: <code>PoolIterator</code> visits live entries in ascending index order, which is a pure function of the live set and carries no history. EnTT's packed-array order is the opposite &mdash; it is a function of the entire create/destroy history, because swap-and-pop moves the last element into each hole.</p>
+  <p class="prose">Two specifics, both now pinned down by tests in <code>src/tests/entt_smoke.cpp</code> so that an EnTT upgrade which changed either one fails loudly rather than silently desyncing. Writing those tests immediately caught a wrong assumption, which is the best possible argument for writing them first:</p>
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr><th>Operation</th><th>Iteration order</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Create ids 0&ndash;7, remove nothing</td><td class="num">7, 6, 5, 4, 3, 2, 1, 0</td></tr>
+        <tr><td>&hellip; then destroy id 2</td><td class="num">6, 5, 4, 3, 7, 1, 0</td></tr>
+        <tr><td>&hellip; then <code>sort</code> ascending</td><td class="num">0, 1, 3, 4, 6, 7</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="prose">So views walk the packed array <em>backwards</em> &mdash; iteration is not creation order even before history enters the picture. And after a single removal there is no canonical order at all: neither ascending, nor the descending order an untouched registry would have given.</p>
+  <div class="callout">
+    <p class="eyebrow">The failure this produces</p>
+    <p>The savegame stores the live set, not the allocation history. Load a save and EnTT's packed order is fresh and sequential; in the run that produced that save it was scrambled. Any loop whose result depends on visit order then diverges &mdash; and in OpenTTD several do, because <code>Random()</code> is a single shared LCG. If vehicle A draws before B instead of after, both get different numbers, and the game states separate immediately.</p>
+  </div>
+  <p class="prose"><strong>Rule:</strong> any storage that game-state code iterates must be sorted into canonical ID order before use. Call <code>registry.sort&lt;T&gt;()</code> keyed on the stable ID, gated on a dirty flag set by create and destroy. Once sorted the storage is contiguous in ID order, so you keep the locality you came for.</p>
+  <p class="prose aside"><strong>Measured, and the assumption was half wrong.</strong> This originally continued "structural churn is rare next to the tick rate, so this amortises to nearly nothing", flagged here as load-bearing and unverified. Phase 6 measured it. On wentbourne the assumption holds handsomely &mdash; the registry is dirty on 2.6% of ticks and the sort costs <strong>0.14%</strong> of the game loop. On Hilbergen it fails: dirty on <strong>88%</strong> of ticks, at <strong>10.4%</strong> of the game loop. The 30&times; smaller save is 74&times; more expensive in relative terms, because sort cost is set by churn frequency &mdash; a property of the savegame, not of its size. The O(<i>n</i> log <i>n</i>) barely enters into it. See phase 6.</p>
+  <p class="prose">Usefully, <code>sort</code> arranges storage so that <em>iteration</em> matches the comparator rather than the raw packed layout &mdash; a plain <code>lhs &lt; rhs</code> yields ascending iteration despite the reversed walk. That reproduces <code>PoolIterator</code>'s order exactly, which is what makes an order-preserving migration possible at all.</p>
+  <p class="prose">The mechanism, verified in EnTT's source rather than inferred from behaviour: iteration walks the packed array backwards (<code>begin()</code> is <code>iterator{packed, packed.size()}</code> and <code>operator*</code> reads <code>packed[offset - 1]</code>), while <code>sort_n</code> sorts through <em>reverse</em> iterators, leaving the array physically descending. Walking a descending array backwards yields ascending order, so the two reversals cancel by design. EnTT specifies <code>sort</code> in terms of iteration order, not physical layout.</p>
+  <div class="callout">
+    <p class="eyebrow">Where the reversed walk still bites</p>
+    <p>It is invisible <em>as long as you sort</em>, and leaks the moment you iterate unsorted storage. That makes it a live trap for phase 2 specifically, where the client-side components deliberately do not need sorting: code there must not assume creation order.</p>
+  </div>
+  <p class="prose"><strong>Consequence:</strong> owning groups are unavailable for game-state components. EnTT forbids sorting a pool once a group owns it, and sorting is exactly what you need. Use views, or non-owning groups.</p>
+
+  <h3>2. Pointer stability</h3>
+  <p class="prose">EnTT's default swap-and-pop invalidates references on removal &mdash; and <em>sorting moves components too</em>, so switching a storage to <code>in_place_delete</code> does not rescue you. In fact it is not merely insufficient but unavailable, because <code>sort_n</code> opens with:</p>
+<pre><code>ENTT_ASSERT((mode != deletion_policy::in_place) || (head == max_size),
+            "Sorting with tombstones not allowed");</code></pre>
+  <p class="prose">So pointer stability via <code>in_place_delete</code> and canonical order via <code>sort</code> are mutually exclusive for any storage that game-state code iterates &mdash; and canonical order is not negotiable. The rule below is the only route, not the better of two options.</p>
+  <p class="prose">Meanwhile <code>Vehicle</code> is threaded through six intrusive pointers (<code>next</code>, <code>previous</code>, <code>first</code>, <code>last</code>, and the shared-order pair) and two hash chains that store <code>Vehicle **</code> outright:</p>
+<pre><code>Vehicle **hash_tile_prev     = nullptr;  // vehicle_base.h:240
+Vehicle **hash_viewport_prev = nullptr;  // vehicle_base.h:237</code></pre>
+  <p class="prose"><strong>Rule:</strong> <code>VehicleID</code> is the only durable reference. A component reference is valid within one tick phase and is never stored across one. The legacy <code>Vehicle *</code> path stays alive and correct throughout the migration &mdash; that is what keeps the game playable between phases.</p>
+
+  <h3>3. The save format is frozen</h3>
+  <p class="prose">This constraint turns out to be the friendly one. <code>SLE_VAR</code> does not use <code>offsetof</code>; it expands to a lambda that returns a member address:</p>
+<pre><code>return std::addressof(static_cast&lt;const base *&gt;(b)-&gt;variable);
+// SLE_GENERAL_NAME, saveload.h:933</code></pre>
+  <p class="prose">The descriptor list is therefore already an indirection layer, keyed by field <em>name</em> &mdash; and the <code>"VEHS"</code> chunk is a <code>ChunkType::SparseTable</code>, so pool indices are written explicitly and exact IDs are recoverable on load.</p>
+  <p class="prose"><strong>Rule:</strong> never touch the descriptor lists. Keep the named fields on <code>Vehicle</code> as a save/load staging area: gather components into <code>Vehicle</code> before saving, scatter back into components after loading. The emitted <em>format</em> is then unchanged by construction &mdash; the same fields, names, order and types &mdash; <code>vehicle_sl.cpp</code> barely changes, and your benchmark saves keep working. Ignore EnTT's <code>snapshot</code> and <code>continuous_loader</code> entirely; they would write a new format, which is the one thing you cannot have.</p>
+  <p class="prose">Note that preserving the format is a claim about how a given game state is serialised, and is separate from whether two runs produce identical files. They do not, even on unmodified master, for reasons covered under the strategy below.</p>
+  <p class="prose"><strong>Check the descriptors, not the comments.</strong> Phase 2 assumed <code>sprite_cache</code> was safe to move because it reads as a cache and sits among <code>NOSAVE</code> neighbours &mdash; but part of it is serialised for effect and disaster vehicles, which have no engine to regenerate a sprite from. A field's save status is whatever <code>vehicle_sl.cpp</code> says it is, and nothing else. Grep the descriptor lists for every field before moving it.</p>
+</section>
+
+<section>
+  <h2>Strategy: a parallel registry, not a rewrite</h2>
+  <p class="prose">Every phase below preserves this division of labour. <code>Vehicle</code> and its pool keep three jobs: identity, cold data, and the save façade. The registry holds hot per-tick data. Loops migrate individually, and both representations stay valid at once during each migration &mdash; verified, not assumed.</p>
+  <p class="prose">The technique that makes this safe is <strong>shadow mode</strong>: when a field moves, write it to both places and assert equality every tick behind a debug flag. You ship the phase with shadow mode on, run your benchmark saves, and only remove the old field once the assert has been silent across a long run. It is the difference between a migration you can trust and one you merely hope about.</p>
+  <p class="prose">Note the deliberate ordering: the early phases are the ones with <em>no</em> determinism exposure, so you learn EnTT's API against systems that cannot desync and are not in the savegame. Risk climbs only after the idioms are familiar.</p>
+
+  <h3>How a phase proves it changed nothing</h3>
+  <p class="prose">This plan originally proposed comparing exit savegames byte for byte. Phase 0 measured that and it does not hold <strong>on unmodified master</strong>, so it cannot be an exit criterion. Running the same save twice with identical arguments produces exit saves differing in a few hundred bytes. Two observations identify why:</p>
+  <ul class="prose">
+    <li>One 32-byte cluster is <code>_game_session_stats.savegame_id</code> (<code>misc_sl.cpp:105</code>), a random per-session identifier. Expected, and harmless.</li>
+    <li>The rest are scattered 1&ndash;4 byte runs through the <code>VEHS</code> chunk at roughly one per vehicle record &mdash; and the count <em>does not grow with run length</em>: 488 differing bytes after 1 tick, 442 after 100, 445 after 20,000.</li>
+  </ul>
+  <p class="prose">Divergence that is immediate and does not accumulate is not simulation drift. It points at bytes in the vehicle records that are not a function of game state, most likely fields never initialised for some vehicle types and serialised with whatever the allocator left behind. Ruled out along the way: the link graph never ran, <code>_interactive_random</code> is not saved, and <code>StationCompare</code> orders by index rather than by pointer.</p>
+  <div class="callout">
+    <p class="eyebrow">The replacement</p>
+    <p>A <strong>game state fingerprint</strong> (<code>src/state_fingerprint.cpp</code>): an FNV-1a hash over the values that define behaviour, split per subsystem. Everything is visited in ascending pool index order, so the hash is a function of the live set rather than of allocation history; and object references are hashed as pool <em>indices</em>, never pointers, so the result is independent of the allocator and of address space layout &mdash; which is what lets it survive the very refactors it exists to check.</p>
+    <p>Splitting it per subsystem is the useful part: a mismatch says <em>where</em> behaviour changed, turning "something diverged" into "vehicles diverged, towns did not".</p>
+  </div>
+  <p class="prose">Verified both directions, because a hash that never changes and one that always changes are equally useless. Two identical 3,000-tick runs give identical fingerprints while their savegames differ by roughly 100 KB &mdash; which also confirms the simulation really is deterministic and the savegame noise really is noise. Running 3,001 ticks instead changes the vehicle, company, station and global hashes, and correctly leaves towns and industries alone, because those only update on periodic ticks.</p>
+  <p class="prose">Save <em>format</em> compatibility is untouched by any of this and remains a hard requirement. It is verified differently: a save written by a migrated build must still load in unmodified OpenTTD.</p>
+  <div class="callout">
+    <p class="eyebrow">A gap in this, identified while planning phase 6</p>
+    <p>The fingerprint check runs the same save twice from a fresh load and compares. That catches non-determinism <em>within</em> a run, but it cannot catch an iteration order that depends on session history &mdash; both runs start from the same fresh load, so both get the same order.</p>
+    <p>The missing test is <strong>save-resume equivalence</strong>: run <i>N</i> ticks then save, reload and run <i>M</i> more, and require the same fingerprint as <i>N</i>+<i>M</i> ticks run straight through. That is the second of the two determinism requirements under constraint 1, and nothing in the harness has been checking it.</p>
+    <p><strong>Phase 5 implemented it and found it unenforceable.</strong> It fails on unmodified code: a game resumed from an autosave-on-exit save does not evolve deterministically &mdash; the same binary, given the same exit-save file, disagrees with itself. So the criterion is currently aspirational, and unblocking it is work phase 6 inherits. See phase 5.</p>
+  </div>
+</section>
+
+<section>
+  <h2>The phases</h2>
+  <div class="legend">
+    <div><span class="dot clear"></span> No game-state exposure &mdash; cannot desync</div>
+    <div><span class="dot caution"></span> Touches game state &mdash; shadow-verified</div>
+    <div><span class="dot danger"></span> Alters visit order or deep coupling</div>
+  </div>
+  <div class="callout">
+    <p class="eyebrow">The order changed after phase 4</p>
+    <p>The save staging mechanism was originally the last phase, bundled in as consolidation. It is really infrastructure that phases 4 and 6 depend on, so it became phase 5 and everything after it moved down one. Two things forced it: commit 3 of a field migration is impossible for a serialised field without staging, and every field phase 4 still has to move is serialised &mdash; and a view-iterating tick loop cannot show a benefit while it still has to write back to authoritative members on a 560-byte <code>Vehicle</code>.</p>
+    <p>Incidentally the original order also put a <span class="aspect-label" style="color:var(--danger);background:var(--danger-bg)">Danger</span> phase before a <span class="aspect-label" style="color:var(--caution);background:var(--caution-bg)">Caution</span> one, against the risk-ascending principle the rest of the plan follows. The new order fixes that as a side effect.</p>
+    <p><code>vcache</code> is now <strong>fully migrated</strong>: it is not serialised, so its commits 2 and 3 needed nothing from phase 5. It is the first field group to complete all three commits and the first <code>Vehicle</code> member the migration has actually deleted.</p>
+    <p>An earlier version of this page predicted that finishing <code>vcache</code> would <em>reduce</em> cost rather than add it. <strong>That prediction was wrong, and it was wrong because it never named a mechanism.</strong> Measurement found neither of the two mechanisms a saving would have needed &mdash; see phase 4.</p>
+  </div>
+
+  <div class="callout">
+    <p class="eyebrow">The agreed working sequence</p>
+    <p>Phase 5, then finish phase 4, then phase 6 running <strong>both</strong> dispatch variants for comparison. <strong>Phases 5, 4 and 6 are all done</strong> &mdash; and phase 6 ran three variants rather than two, because the second turned out to be two different things wearing one name. Staging needed no staging struct, all nine motion fields are migrated with their members deleted, and the dispatch work that was supposed to pay for that migration paid nothing. Phase 7 is next, and it is now carrying the whole remaining case for this exercise.</p>
+    <p><strong>That order is forced, not chosen.</strong> All nine motion fields are serialised &mdash; checked against the descriptor lists rather than assumed: <code>x_pos</code>, <code>y_pos</code> and <code>z_pos</code> at six descriptor sites each, <code>progress</code> at three, <code>direction</code> and <code>tick_counter</code> at two, <code>cur_speed</code>, <code>subspeed</code> and <code>motion_counter</code> at one. Commit 3 is therefore impossible for every one of them without staging, and until commit 3 lands each migrated field keeps paying dual-write cost. No ordering finishes phase 4 before phase 5.</p>
+    <p><strong>Phase 5 is also the first honest test of whether commit 3 gives anything back.</strong> Finishing <code>vcache</code> showed that deleting a member is not automatically a win: its dual writes were cold and its bytes vanished into padding. The motion fields differ on the first count &mdash; <code>subspeed</code> and <code>motion_counter</code> are written <em>per tick</em> &mdash; so the mechanism absent for <code>vcache</code> is genuinely present here. That makes the two-field commit 3 immediately after staging a cheap, well-isolated measurement. Take it before the bulk work on the other seven groups, not after.</p>
+  </div>
+
+  <div class="phase" data-aspect="clear">
+    <div class="gutter"><span class="phase-no">00</span><span class="signal"><i></i><i></i><i></i></span></div>
+    <div class="phase-body">
+      <div class="phase-head"><h3>Toolchain and baseline</h3><span class="aspect-label">Clear</span><span class="done-tag">Done</span></div>
+      <p>No EnTT usage in the game yet &mdash; only the ability to use it, and the numbers to judge later phases by. EnTT 3.16.0 was already a port in the local vcpkg tree, so it went into <code>vcpkg.json</code>, then <code>find_package(EnTT CONFIG REQUIRED)</code> linked into <code>openttd_lib</code>.</p>
+      <p>The instrumentation needed more than expected. The existing <code>_pf_data</code> is a 512-sample ring buffer, which on a 20,000-tick run covers only the last few percent, so whole-run totals were added to <code>PerformanceData</code> and exposed through <code>GetPerformanceTotal</code>. A new <code>stats=&lt;path&gt;</code> parameter on the null video driver writes the report. It goes to a <em>file</em> because the win64 binary is GUI-subsystem: <code>CreateConsole</code> reopens the standard streams onto a freshly allocated console, so redirected stdout captures nothing even from a failing run.</p>
+      <p>Baseline, wentbourne, RelWithDebInfo, 5,000 ticks &mdash; a 1024&times;1024 map in year 3739 with 85,259 vehicle parts across 13,899 consists:</p>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr><th>Element</th><th>Total</th><th>Share</th><th>ns/part</th><th>ns/consist</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>GameLoop</code></td><td class="num">195,001 ms</td><td class="num"></td><td class="num">457.4</td><td class="num">2806.1</td></tr>
+            <tr><td><code>GameLoopTrains</code></td><td class="num">98,138 ms</td><td class="num">50.3%</td><td class="num">261.1</td><td class="num">4061.2</td></tr>
+            <tr><td><code>GameLoopRoadVehicles</code></td><td class="num">54,592 ms</td><td class="num">28.0%</td><td class="num">1985.5</td><td class="num">1985.5</td></tr>
+            <tr><td><code>GameLoopShips</code></td><td class="num">7,087 ms</td><td class="num">3.6%</td><td class="num">503.0</td><td class="num">503.0</td></tr>
+            <tr><td><code>GameLoopAircraft</code></td><td class="num">2,340 ms</td><td class="num">1.2%</td><td class="num">306.1</td><td class="num">624.9</td></tr>
+            <tr><td><strong>All vehicle ticks</strong></td><td class="num"><strong>162,157 ms</strong></td><td class="num"><strong>83.2%</strong></td><td class="num"><strong>380.4</strong></td><td class="num"></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Vehicle ticks are 83% of the game loop, and the save runs at 25.4 ticks/s against the roughly 33.3 needed for real time &mdash; genuinely at the limit rather than merely large. That confirms the premise of this plan on real data. <code>sizeof(Vehicle)</code> is 552 bytes and <code>sizeof(Train)</code> 648.</p>
+      <div class="callout">
+        <p class="eyebrow">Read the last two columns together, because they disagree</p>
+        <p>Per <em>part</em>, road vehicles look about eight times worse than trains (1986 against 261 ns). Per <em>consist</em> the ranking reverses and trains are 2.05&times; the more expensive (4061 against 1986 ns). The parts-per-consist ratios explain it exactly: 15.6 for trains, 1.00 for road vehicles and ships, 2.04 for aircraft, which each carry a separate shadow part. A train consist does its pathfinding and order processing once and spreads the cost across sixteen parts; a road vehicle bears it alone.</p>
+        <p>This is not a curiosity, it changes what the later phases aim at. <strong>Phase 4</strong> packs hot fields, which helps whatever is walked per part &mdash; so the per-part column governs, and trains dominate the part count by an order of magnitude. <strong>Phase 6</strong> devirtualises per-consist decision work &mdash; so the per-consist column governs, and trains lead there too, by a factor of two. Road vehicles are the clear second target, taking 28% of the game loop from a fourteenth of the parts. The raw totals hide all of that.</p>
+      </div>
+      <p>Absolute timings vary with machine load, so compare percentage shares across sessions and take a median of several samples for absolute figures. An earlier draft of this page put the noise band at 15%; phase 3 showed that figure was measured with compiles running in parallel and is badly wrong as guidance &mdash; see the note under phase 3.</p>
+      <div class="callout">
+        <p class="eyebrow">Correction: the first baselines were distorted by asserts</p>
+        <p><code>OPTION_USE_ASSERTS</code> is a CMake cache variable and applies to every configuration in a tree, so the original tree had asserts on even in <code>RelWithDebInfo</code>. A second tree configured with <code>OPTION_USE_ASSERTS=OFF</code> was added before phase 3, and it did not merely tidy the numbers &mdash; it moved a conclusion.</p>
+        <p>Assertion checking was more than twice as expensive in road vehicle code as in train code: <strong>&minus;36% against &minus;17.5%</strong>. So the four vehicle elements were not just inflated, they were inflated <em>unevenly</em>. Per consist, trains turn out to be 2.05&times; road vehicles rather than 1.6&times;, and an earlier draft of this page recommended treating them as near equals for phase 6. That was reading assert overhead as vehicle cost.</p>
+        <p>On Hilbergen the same correction takes trains from 79.7% of the game loop to <strong>70.1%</strong>, and the per-part cost that phases 4 and 5 must beat from 116 ns to <strong>85 ns</strong>. Chasing the inflated figure would have made any improvement look about a third better than it was.</p>
+        <p>Fingerprints were identical across both trees on both saves, which confirms asserts do not change game logic &mdash; so correctness can be gated in the assert tree while timings come from the release tree. Use <code>build</code> for shadow-mode assertions and the test suite, <code>build-release</code> for any number that goes in a results table.</p>
+      </div>
+      <div class="exit"><strong>Exit criteria &mdash; met</strong> win64 builds in Debug and RelWithDebInfo; both benchmark saves load and play; fingerprint reproducible across runs; 102 of 102 tests pass; baselines and struct sizes recorded.</div>
+    </div>
+  </div>
+
+  <div class="phase" data-aspect="clear">
+    <div class="gutter"><span class="phase-no">01</span><span class="signal"><i></i><i></i><i></i></span></div>
+    <div class="phase-body">
+      <div class="phase-head"><h3>Registry, identity mapping, lifecycle</h3><span class="aspect-label">Clear</span><span class="done-tag">Done</span></div>
+      <p>An <code>entt::registry</code> now sits beside <code>_vehicle_pool</code> and stays in lockstep with it. Identity maps both ways &mdash; a dense <code>std::vector&lt;entt::entity&gt;</code> indexed by <code>VehicleID</code> forwards, and a <code>VehicleRef{VehicleID}</code> component back. No attempt is made to equate <code>entt::entity</code> with <code>VehicleID</code>; version bits make that a trap, and the savegame carries indices anyway. Implemented in <code>src/vehicle_registry.{h,cpp}</code>, and no game data has moved.</p>
+      <p>Three things the implementation settled that the plan had not:</p>
+      <ul>
+        <li><strong>One constructor hook suffices.</strong> <code>Pool::CreateAtIndex</code> does <code>::new (data) T(index, ...)</code>, so savegame load arrives through <code>Vehicle::Vehicle</code> like everything else. Destruction hooks into <code>~Vehicle()</code> <em>above</em> its <code>CleaningPool()</code> early return, so wholesale pool cleaning on new game or load empties the registry too.</li>
+        <li><strong>The registry is a deliberately leaked singleton</strong>, following <code>PoolBase::GetPools()</code>. Static destruction order across translation units is unspecified, so a file-scope registry could be destroyed while a <code>Vehicle</code> destructor elsewhere is still running during teardown. Leaking one allocation removes the hazard instead of reasoning about the ordering.</li>
+        <li><strong>Validation had to be split by cost.</strong> An O(1) assert on entity count runs at every structural change; the O(n) checks &mdash; identity mapping both ways, ascending iteration order &mdash; run on demand and are reported as <code>ecs.registry_valid</code>. Per-tick O(n) was not viable: effect vehicles churn constantly so the registry is dirty most ticks, and 85,000 vehicles times 20,000 ticks is not a debug build anyone would wait for.</li>
+      </ul>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr><th>Case</th><th>Vehicles</th><th>Entities</th><th>Valid</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Hilbergen, 20,000 ticks</td><td class="num">2,818</td><td class="num">2,818</td><td class="num">yes</td></tr>
+            <tr><td>wentbourne, 5,000 ticks</td><td class="num">85,259</td><td class="num">85,259</td><td class="num">yes</td></tr>
+            <tr><td>Hilbergen, Debug, asserts live</td><td class="num">2,812</td><td class="num">2,812</td><td class="num">yes</td></tr>
+            <tr><td>New game from seed</td><td class="num">10</td><td class="num">10</td><td class="num">yes</td></tr>
+            <tr><td>Reload of a phase 1 exit save</td><td class="num">2,818</td><td class="num">2,818</td><td class="num">yes</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Both fingerprints matched the phase 0 baseline exactly &mdash; <code>015ED3D109C5CCCC</code> and <code>29B52DBB6E7D2558</code> &mdash; which is the gate doing its job: it demonstrates the phase changed no behaviour rather than asserting it. wentbourne ran at 20.9 ticks/s against a 19.3&ndash;20.5 baseline, so the per-tick sort costs nothing measurable, as expected since it early-returns unless the structure changed.</p>
+      <p>One honest caveat: the ordering discipline is established and validated, but nothing yet <em>depends</em> on it &mdash; the sort call site in <code>CallVehicleTicks()</code> currently sorts a registry no game logic reads. Its first real test comes in phase 3. That is deliberate risk-ordering, but it does mean "order assert silent" is a weaker claim now than it will be then.</p>
+      <div class="exit"><strong>Exit criteria &mdash; met</strong> entity count equalled <code>Vehicle::GetNumItems()</code> and the registry validated in all five cases above, including new game and pool cleaning; fingerprints unchanged on both saves; 102 of 102 tests pass.</div>
+    </div>
+  </div>
+
+  <div class="phase" data-aspect="clear">
+    <div class="gutter"><span class="phase-no">02</span><span class="signal"><i></i><i></i><i></i></span></div>
+    <div class="phase-body">
+      <div class="phase-head"><h3>First real components</h3><span class="aspect-label">Clear</span><span class="done-tag">Done</span></div>
+      <p>This was meant to move <code>MutableSpriteCache</code>, <code>colourmap</code>, <code>coord</code> and <code>bounds</code> into components and win on <code>ViewportDrawing</code>. Two things found on contact changed the phase, and both invalidate reasoning that was on this page.</p>
+      <div class="callout">
+        <p class="eyebrow">Correction: <code>sprite_cache</code> is not NOSAVE</p>
+        <p>It is serialised, unconditionally, in two descriptor lists:</p>
+<pre><code>SLE_VAR(Vehicle, sprite_cache.sprite_seq.seq[0].sprite, ...)
+// vehicle_sl.cpp:1018 in SlVehicleEffect, :1073 in SlVehicleDisaster</code></pre>
+        <p>Which makes sense in hindsight: effect vehicles (smoke, sparks) and disaster vehicles have no engine to regenerate a sprite from, so the sprite id <em>is</em> game state. That gives it save-format contact, which violates this phase's defining property, so it moves to phase 7 where the staging struct is already on the table.</p>
+      </div>
+      <p><strong>The sweeps are cold, so the headline win was illusory.</strong> <code>ResetVehicleColourMap</code> is called from a company colour change, from company creation and bankruptcy, and from one settings change. <code>ResetVehicleHash</code> comes from <code>afterload.cpp</code> and <code>InitializeVehicles</code>. None of them run from the game loop, so "expect a large multiple on that loop" was true and worthless.</p>
+      <p>Worse in the other direction: <code>colourmap</code> is a <em>memoisation cache</em>, read by <code>GetEngineColourMap</code> once per vehicle per draw. Moving it behind an accessor adds indirection to the path that actually runs and speeds up one that essentially never does. The phase is perf-neutral by design, not a win &mdash; which is a useful thing to have learned cheaply: "move hot fields into components" does not imply "move every NOSAVE field", and a cache read per draw can be better off as a plain field.</p>
+      <p><strong>What was actually done:</strong> <code>colourmap</code> moved to a <code>VehicleColourMap</code> component as the exemplar rather than the whole job. The transferable result is the shape &mdash; and the second item is the one that matters:</p>
+      <ul>
+        <li>A component holding the data, defaulted so no constructor initialisation is needed.</li>
+        <li>An <strong>accessor seam</strong> on <code>Vehicle</code> (<code>GetColourMap</code>, <code>SetColourMap</code>, <code>InvalidateColourMap</code>) so the sixteen call sites no longer know where the data lives. This is what makes later phases cheap: storage can move again without touching call sites. All three are <code>const</code>, because a cache is not part of the vehicle's identity &mdash; the same reasoning that already made <code>coord</code> <code>mutable</code>. Two <code>const_cast</code>s disappeared as a side effect.</li>
+        <li>The sweep as <code>view&lt;T&gt;().each(callback)</code>, which uses EnTT's positional fast path for <code>swap_and_pop</code> storage instead of entity indirection.</li>
+        <li>Eager attachment alongside <code>VehicleRef</code>, appropriate because every vehicle needs one. A component only some vehicles need should be emplaced on demand instead.</li>
+      </ul>
+      <p>The sweep is deliberately <strong>not</strong> sorted, and says so in a comment. Clearing every element is order-independent and the component cannot influence game state &mdash; but this is exactly the case where EnTT's reversed walk is visible, so the comment records that nothing may depend on the order.</p>
+      <div class="table-scroll">
+        <table>
+          <tbody>
+            <tr><td><code>sizeof(Vehicle)</code></td><td class="num">552 &rarr; 544 bytes</td></tr>
+            <tr><td>Fingerprints, both saves</td><td class="num">unchanged</td></tr>
+            <tr><td>Registry entities</td><td class="num">2,818 / 85,259, valid</td></tr>
+            <tr><td>Tests</td><td class="num">102 of 102</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>The <code>sizeof</code> reduction is the first concrete layout win and is deterministic rather than noise &mdash; though it is 8 bytes for removing a 4 byte field, which is worth understanding rather than banking. Measured by re-adding a 4 byte probe in the same slot and diffing offsets: <code>build_year</code> shifted by 4 as expected, but everything from <code>last_loading_tick</code> onwards shifted by 8. That field is a 64-bit tick counter needing 8 byte alignment, and <code>colourmap</code>'s presence had pushed the run of 4 byte fields before it onto an odd boundary, forcing 4 bytes of padding. So the field cost 8 bytes: its own 4, plus 4 it forced elsewhere. A struct's shrinkage is a function of <em>where</em> a field sat, not just how big it was &mdash; do not extrapolate per-field savings from this one. A temporary probe also verified the seam does not alias, writing a distinct value to all 2,819 vehicles and confirming each read back its own &mdash; the one failure mode nothing else in the harness would have caught. It was removed afterwards, since a stats function should not mutate state.</p>
+      <p>Drawing timings resolved nothing. Across phases 0, 1 and 2 the Hilbergen <code>Drawing</code> total was 1516, 2022 and 1782 ms, and phase 1 touched no drawing code at all &mdash; so a 33% swing from nothing means no claim either way is defensible from this harness.</p>
+      <p><strong><code>coord</code> and <code>bounds</code> were attempted and reverted.</strong> Both are genuinely presentation-only, so the phase's premise held and the mechanical part went fine. Two things went wrong, and both are worth more than the change would have been.</p>
+      <p>First, <strong>the destructor read a component after the entity was gone.</strong> <code>~Vehicle()</code> calls <code>MarkAllViewportsDirty()</code>, which reads <code>coord</code>, but the phase 1 hook released the entity at the <em>top</em> of the destructor. That is an access violation, not a leak, and it crashed 1.3 seconds into a run. <code>colourmap</code> never exposed it because nothing during teardown reads a colour map. The fix &mdash; release the entity last, on both the normal path and the <code>CleaningPool()</code> early return &mdash; has been <em>kept</em>, because it is unconditionally more correct for any future component that teardown touches.</p>
+      <div class="callout">
+        <p class="eyebrow">Second, and the most important finding of the phase</p>
+        <p>The accessor seam is only cheap when it is called <em>once per operation</em>. <code>UpdateDeltaXY</code> writes <code>bounds</code> field by field &mdash; the road vehicle implementation alone has about fifteen separate writes &mdash; and it runs for every moving vehicle every tick. Replacing one field access with a registry lookup <em>per write</em> meant a function call, a vector index, a sparse-set lookup and a dereference, fifteen times where there had been fifteen offsets from <code>this</code>.</p>
+        <p>Measured on Hilbergen at 20,000 ticks, <code>GameLoop</code> went from 7,971 ms at baseline to <strong>13,874 ms</strong> &mdash; roughly <strong>+74%</strong> &mdash; in exchange for 24 bytes on a struct. Reverted.</p>
+        <p><strong>Phase 4 is exactly the same shape.</strong> <code>x_pos</code>, <code>y_pos</code>, <code>z_pos</code>, <code>direction</code>, <code>cur_speed</code> and <code>subspeed</code> are all written individually in hot movement code, so a naive accessor per field would reproduce this precisely &mdash; and it would be far harder to spot there, because phase 4 is <em>expected</em> to change timings. A 74% regression hiding inside a phase whose purpose is moving timings is the kind of thing that ships.</p>
+      </div>
+      <p><strong>Also deferred:</strong> <code>sprite_cache</code>, as above, which goes to phase 8.</p>
+      <div class="exit"><strong>Exit criteria &mdash; met</strong> builds in both configurations; fingerprints unchanged; registry valid; regression suite green. The visual criterion is outside what this harness can check, since colour remapping is presentation and therefore absent from the fingerprint by design &mdash; it was verified by hand: change a livery, confirm every vehicle updates, save, reload, confirm the colour survives. That last leg matters most, because the livery is saved state while the cache is not, so a correct colour after reload proves the cache is properly transient and recomputes.</div>
+    </div>
+  </div>
+
+  <div class="phase" data-aspect="caution">
+    <div class="gutter"><span class="phase-no">03</span><span class="signal"><i></i><i></i><i></i></span></div>
+    <div class="phase-body">
+      <div class="phase-head"><h3>Shadow mode</h3><span class="aspect-label">Caution</span><span class="done-tag">Done</span></div>
+      <p>The premise here was "pick the cheapest game-state sweeps first". It does not hold, for the same reason phase 2's did not: every full-pool loop that writes a saved field lives in <code>afterload.cpp</code> or <code>vehicle_sl.cpp</code>, i.e. one-time savegame migration. <code>CallVehicleTicks</code> is the only hot full-pool loop in the game, and converting <em>that</em> is phase 4 and 5 work.</p>
+      <p>So the phase delivered its durable half instead: <strong>the shadow-mode scaffolding</strong>, in <code>src/ecs_shadow.{h,cpp}</code>, demonstrated on <code>VehicleCache</code>. That field group was chosen because it is the one that is game-state-affecting but <em>not</em> serialised &mdash; <code>cached_max_speed</code> drives movement and <code>cached_cargo_age_period</code> drives cargo ageing, while the single mention of <code>vcache</code> in <code>vehicle_sl.cpp</code> is a read during afterload rather than a descriptor. A genuine Caution target that does not also need the save-staging machinery, which can wait for phase 4.</p>
+      <div class="callout">
+        <p class="eyebrow">What shadow mode actually verifies</p>
+        <p>Not a computation &mdash; <strong>coverage</strong>. Writes still go to the <code>vcache</code> member, with a <code>SyncVehicleCache()</code> after each, and reads go through an accessor that compares the two copies. So if a write site was missed, the component goes stale and the next read reports a mismatch. With 47 usage sites across 9 files, "did I find all 11 writes" is the actual risk.</p>
+        <p>It <strong>counts rather than asserts</strong>. An assert stops at the first divergence and tells you only that something is wrong; a counter lets the run finish and reports mismatches against total comparisons, which says how <em>often</em> and therefore usually suggests why. A comparison count of zero is not a pass &mdash; it means shadow mode was compiled out, which is the normal state of the release tree.</p>
+        <p class="aside"><strong>Known blind spot, found later.</strong> Verification only happens where a read goes through the accessor, and the counters are per field <em>group</em> rather than per field &mdash; so a field nothing reads that way is never checked while its group still reports clean. That is not hypothetical: a missing sync on <code>cached_vis_effect</code> survived tens of millions of <code>vehicle_cache</code> comparisons. See phase 4.</p>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr><th>Run</th><th>Comparisons</th><th>Mismatches</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Hilbergen, Debug, 20,000 ticks</td><td class="num">54,614,511</td><td class="num">0</td></tr>
+            <tr><td>wentbourne, Debug, 500 ticks</td><td class="num">42,564,438</td><td class="num">0</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>The wentbourne run matters more than its tick count suggests: coverage comes from vehicle diversity rather than length, and it exercises all four types at once. Fingerprints matched on both saves, and the Hilbergen match was between a <em>Debug</em> run and a <em>release-tree</em> baseline &mdash; further confirmation that the fingerprint is build-independent.</p>
+      <p><strong>It costs about 2.4%.</strong> Repeated 20,000-tick Hilbergen runs on a quiet machine gave 6610 and 6580 ms before, against 6773, 6735 and 6746 ms after &mdash; about 0.3% spread within each set. Shadow mode is compiled out of the release tree, so this is not verification overhead but the accessor indirection itself: one registry lookup per vehicle per tick in <code>CallVehicleTicks</code>, plus one in <code>GetAcceleration</code>.</p>
+      <p class="aside"><strong>Later correction.</strong> This figure was originally stated as "measurable rather than noise" on the strength of that 0.3% within-set spread. Eight consecutive runs during phase 4 spanned 6.8% with no code change at all, which means the within-set tightness was a property of the batch, not of the harness. Read this as <em>small, sign probably right, magnitude unproven</em> &mdash; see the note under phase 4 and "what to expect".</p>
+      <p>That is the number phase 4 has to beat, and it carries a clear implication: nine motion fields read several times per tick <strong>cannot pay for themselves through accessors alone</strong>. The win has to come from converting the tick loop to iterate views, so the lookup is amortised across a packed walk instead of repeated per vehicle.</p>
+      <div class="exit"><strong>Exit criteria &mdash; met</strong> shadow mismatches zero on both saves; fingerprints unchanged; registry valid; both configurations build; 102 of 102 tests pass. The <code>vcache</code> member was deliberately still present at this point, because shadow mode needs both copies &mdash; so there was no <code>sizeof</code> win yet. This phase trades size for a safety net by design. The member has since been deleted, in phase 4's <code>vcache</code> completion, which also showed that the <code>sizeof</code> win never existed to be had.</div>
+    </div>
+  </div>
+
+  <div class="phase" data-aspect="caution">
+    <div class="gutter"><span class="phase-no">04</span><span class="signal"><i></i><i></i><i></i></span></div>
+    <div class="phase-body">
+      <div class="phase-head"><h3>Motion components</h3><span class="aspect-label">Caution</span><span class="done-tag">Done</span></div>
+      <p>The main event, and the reason for the whole exercise. Extract the fields the tick loop actually reads &mdash; <code>x_pos</code>, <code>y_pos</code>, <code>z_pos</code>, <code>direction</code>, <code>cur_speed</code>, <code>subspeed</code>, <code>progress</code>, <code>tick_counter</code>, <code>motion_counter</code> &mdash; into one or two tightly packed components. This is where the ~600-byte stride collapses toward a cache line.</p>
+      <p><strong>Resolve the component reference once per function, not once per field access.</strong> Phase 2 measured a 74% game loop regression from doing the latter, and the movement code here has the same shape: many individual writes inside one hot function. Bind a local reference at the top and work through it. This is not a micro-optimisation, it is the difference between the phase being a win and being a large loss.</p>
+      <div class="callout">
+        <p class="eyebrow">This phase is expected to be slower, deliberately</p>
+        <p>Phase 3 measured the accessor seam at 2.4% for one small struct read once or twice per vehicle per tick. Nine motion fields, read and written repeatedly through the movement code, will cost more. Moving fields into components does nothing for locality while the loop still walks <code>Vehicle::Iterate()</code> and reaches into the registry per vehicle &mdash; the packed walk that pays for it is phase 6's job.</p>
+        <p>The obvious response is to merge phases 4 and 6 so the net is never negative. <strong>That is deliberately not being done.</strong> Kept separate, each half is independently measurable: phase 4 answers "what does the seam cost?", phase 6 answers "what does packed iteration buy?". Merged, only the sum is observable, and if the sum disappoints there is no way to tell which half was responsible. The regression is the measurement, not a mistake.</p>
+        <p>So a slower result here is a pass. What would be a failure is a changed fingerprint, a shadow mismatch, or a regression far outside the predicted range &mdash; the last of which would suggest the once-per-function rule was broken somewhere. <strong>Prediction, recorded before measuring:</strong> scaling phase 3's 2.4% by lookups per vehicle per tick puts this somewhere between 5% and 20% on Hilbergen. Wide, because it depends how many functions in the movement path end up resolving a reference. Well outside that range in either direction means the cost model is wrong, and worth understanding before phase 6 obscures it.</p>
+        <p class="aside"><strong>Outcome: the prediction was blown, and the escape clause earned its keep.</strong> The full phase landed at +90%, four times the top of the range. Chasing that down &mdash; rather than filing it under "phase 4 is expected to be slower" &mdash; is what found the real cause, which was three non-inlinable calls per field access and not the seam at all. After repair it sits at +37%. Recording a range in advance is what made the miss visible as a miss; without it, +90% would have been indistinguishable from "the cost we accepted".</p>
+      </div>
+<pre><code>/* Wrong: one registry lookup per write. */
+this-&gt;GetBounds().extent.x = 24;
+this-&gt;GetBounds().extent.y = 24;
+
+/* Right: one lookup, then plain member writes. */
+SpriteBounds &amp;bounds = this-&gt;GetBounds();
+bounds.extent.x = 24;
+bounds.extent.y = 24;</code></pre>
+      <p>Sequence it in three commits per group: add the component and write both (shadow), flip readers over, then delete the shadow write. The <code>Vehicle</code> fields stay declared throughout, because the save descriptors name them; from here they are the staging area described in constraint 3, populated at save time rather than continuously.</p>
+
+      <h4>What happened: <code>subspeed</code> and <code>motion_counter</code>, commit 1</h4>
+      <p>Measured <strong>+9.2%</strong> on the Hilbergen game loop, inside the 5&ndash;20% predicted range, so the cost model holds. Fingerprints unchanged on both fixtures, shadow mismatches zero, 102 of 102 tests passing. <code>sizeof(Vehicle)</code> rose 544 &rarr; 560 while both copies live, as it must.</p>
+      <p>Two things went wrong and both were caught rather than shipped. <strong>462 shadow mismatches</strong> appeared because savegame load writes members straight through the save descriptors' address getters, bypassing every accessor and leaving components stale &mdash; fixed with a scatter in <code>AfterLoadVehiclesPhase2</code>. No grep for <code>-&gt;subspeed =</code> could have found that, which is the single strongest argument for shadow mode existing at all. Separately, an early draft <em>read</em> the component and <em>wrote</em> the member in the same expression, which propagates staleness instead of detecting it; the fix was a <code>VerifyMotion()</code> that returns nothing, so a read cannot accidentally come from the shadow copy.</p>
+
+      <h4>Completing <code>vcache</code>: shadow mode's blind spot, demonstrated</h4>
+      <p><code>vcache</code> is unserialised, so it went all the way to commit 3 without waiting for staging. Flipping its reads immediately exposed a real bug in the already-committed phase 4 work: <code>UpdateVisualEffect</code> ends with a <code>ToggleBit</code> on the member <em>after</em> its sync call, so the component kept the pre-toggle value indefinitely. Shadow mode had reported zero mismatches throughout.</p>
+      <div class="callout">
+        <p class="eyebrow">Zero mismatches is a statement about read coverage, not about the field group</p>
+        <p>Verification only happens where a read goes through the accessor. <code>cached_vis_effect</code> had <em>no</em> accessor reads, so it had no verification &mdash; while the group it belongs to still reported clean, because the counters are per group rather than per field. Only <code>cached_max_speed</code> and <code>cached_cargo_age_period</code> were genuinely covered.</p>
+        <p>So before trusting a shadow result for a field, check that something actually reads that field through the accessor. The bug was latent rather than live &mdash; nothing consumed the stale value &mdash; but it would have become a real behaviour change the moment commit 2 flipped the powered-wagon check in <code>train_cmd.cpp</code> over.</p>
+      </div>
+
+      <h4>Why finishing <code>vcache</code> did not pay off</h4>
+      <p>Commit 2 flipped 23 read sites; commit 3 converted the writes, deleted the member and retired the <code>VehicleCache</code> shadow check. Correctness held throughout &mdash; fingerprints unchanged on both fixtures, determinism check passing, 102 of 102 tests, <code>vehicle_motion</code> still zero mismatches over 9,117,260 comparisons.</p>
+      <div class="table-scroll">
+      <table>
+        <thead><tr><th>State</th><th class="num">Samples</th><th class="num">Minimum</th><th class="num">Spread</th></tr></thead>
+        <tbody>
+          <tr><td>Phase 0 baseline</td><td class="num">2</td><td class="num">6,580 ms</td><td class="num">0.5%</td></tr>
+          <tr><td>Phase 4, motion commit 1</td><td class="num">3</td><td class="num">7,182 ms</td><td class="num">0.7%</td></tr>
+          <tr><td><code>vcache</code> commit 2</td><td class="num">3</td><td class="num">7,252 ms</td><td class="num">0.9%</td></tr>
+          <tr><td><code>vcache</code> commit 3</td><td class="num">8</td><td class="num">7,153 ms</td><td class="num">6.8%</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p><strong>No saving.</strong> Commit 3's eight-sample range straddles both earlier states, so all three post-phase-4 states are indistinguishable at this sample size, sitting about 9% above baseline. The predicted saving rested on two mechanisms and measurement found neither:</p>
+      <ol>
+        <li><strong><code>sizeof(Vehicle)</code> did not shrink</strong> &mdash; 560 in Debug and 544 in release, before and after. <code>sizeof(VehicleCache)</code> is 6, and all 6 bytes were absorbed by alignment padding. Measured offsets after removal put <code>grf_cache</code> at 440, <code>group_id</code> at 464 and <code>sprite_cache</code> at 468, so 2 bytes of interior padding now sit where none did before; members after the removal shifted down by 4 rather than 6, and the tail padded back up to the same total. No struct shrink, no cache-density win.</li>
+        <li><strong>The removed dual writes were cold</strong> &mdash; every <code>SyncVehicleCache()</code> call sat on a <code>ConsistChanged</code> or <code>Update*Cache</code> path, which run when a consist changes composition, not per tick. Deleting cold work does not show up.</li>
+      </ol>
+      <p>The transferable lesson is about prediction: <strong>a performance prediction has to name its mechanism, and the mechanism has to be checked for existence before the prediction is worth recording.</strong> "Deleting a member and its dual write should be cheaper" sounds like reasoning but asserts no mechanism; two minutes with <code>offsetof</code> and a grep for the sync sites would have falsified it before any code moved. Same failure mode as the earlier wrong guesses about tail padding and cold sweeps &mdash; the measured claims on this page have held up, the inferred ones keep not holding up.</p>
+      <p>What the work did buy is structural rather than numeric: one field group fully migrated, its member gone, its scaffolding retired. That is the shape every remaining group has to follow, and it is now known to work end to end.</p>
+
+      <h4>Component references survive creation, not destruction</h4>
+      <p>Commit 3 needed a mutable component reference held across a NewGRF callback, which raised the question of when an EnTT reference can dangle. Verified against <code>entt/entity/storage.hpp</code> at 3.16.0 rather than assumed: <strong>insertion is safe</strong> &mdash; <code>assure_at_least</code> grows a paged vector of page <em>pointers</em>, so existing elements never move; <strong>removal is the hazard</strong> &mdash; <code>basic_storage::pop</code> moves the storage's last element into the vacated slot, so destroying some other vehicle can silently turn a held reference into a different entity's data; and <strong>sorting relocates elements</strong> for the same reason.</p>
+      <p>So the rule is narrower than "don't hold references": hold them freely across creation, never across vehicle destruction or a registry sort. An initial draft of that code comment said "create or destroy", which was wrong on the create half &mdash; worth flagging, because a hazard note that overstates the risk teaches the wrong model just as surely as one that understates it.</p>
+
+      <h4>All nine fields migrated &mdash; and it cost 90%</h4>
+      <p>Every field the phase set out to move is out of <code>Vehicle</code>, in two components: <code>VehicleMotion</code> (<code>cur_speed</code>, <code>subspeed</code>, <code>motion_counter</code>, <code>tick_counter</code>, <code>progress</code>, <code>direction</code>) and <code>VehiclePosition</code> (<code>x_pos</code>, <code>y_pos</code>, <code>z_pos</code>). Grouped by <em>what a hot loop reads together</em>, not by meaning: <code>tick_counter</code> is a generic counter, but <code>CallVehicleTicks</code> reads it in the same few lines as <code>motion_counter</code>, so one lookup serves both. Position is separate because a great deal of code wants coordinates and nothing else.</p>
+      <p>Each group was gated independently and the fingerprint never moved. <code>sizeof(Vehicle)</code> fell <strong>544 &rarr; 528</strong>: the first two groups changed nothing, exactly as the padding finding predicted, <code>progress</code> crossed a boundary at 560&rarr;552, and position's twelve contiguous bytes did the rest. Small scalars vanish into padding; a large contiguous block does not.</p>
+      <p><strong>And the game loop went from 6,580 ms to 12,529 ms.</strong> Far outside the predicted 5&ndash;20% and outside any noise argument &mdash; that batch spread 0.3%.</p>
+      <div class="callout">
+        <p class="eyebrow">The cause was a deliberate shortcut</p>
+        <p>Every group was converted mechanically, rewriting each <code>v-&gt;x_pos</code> into <code>v-&gt;GetPos().x_pos</code> one site at a time. That was chosen on purpose: a per-site rewrite is correct regardless of how <code>v</code>, <code>front</code>, <code>this</code> and <code>consist</code> alias each other in the movement code, whereas hoisting a reference requires proving object identity at every site. Correctness first, across ~850 sites with only the fingerprint as a net.</p>
+        <p>The bill is what phase 2 measured on <code>bounds</code>: the accessor resolved <strong>per access rather than per function</strong>. Three opaque calls per field read, none inlinable across translation units &mdash; <code>GetVehicleRegistry()</code>, <code>GetVehicleEntity()</code>, then the sparse-set <code>get&lt;T&gt;()</code> &mdash; and none of it can be common-subexpression-eliminated because the calls are opaque to the optimiser. <code>direction</code> alone doubled the Debug run, unsurprising at 86 sites plus the sprite path.</p>
+      </div>
+
+      <h4>The repair: +90% down to +37%</h4>
+      <div class="table-scroll">
+      <table>
+        <thead><tr><th>Step</th><th class="num">Hilbergen min</th><th class="num">Change</th></tr></thead>
+        <tbody>
+          <tr><td>Per-site access, out-of-line accessors</td><td class="num">12,529 ms</td><td class="num">&mdash;</td></tr>
+          <tr><td>+ inline registry lookups, cached entity handle</td><td class="num">10,136 ms</td><td class="num"><strong>&minus;19%</strong></td></tr>
+          <tr><td>+ hoisting in the train and shared hot paths</td><td class="num">9,326 ms</td><td class="num"><strong>&minus;8%</strong></td></tr>
+          <tr><td>+ hoisting aircraft and road vehicles</td><td class="num">9,017 ms</td><td class="num">drift</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p>The last row is not an improvement to Hilbergen &mdash; that fixture is trains-only, so aircraft and road vehicle changes cannot affect it and the 3.3% is machine drift. It is listed because that drift is what makes the wentbourne numbers below readable.</p>
+      <p><strong>Inlining the lookups.</strong> <code>VehicleRegistryData</code> moved into the header, the singleton became an <code>extern</code> pointer, and both accessors are now inline. The lazy initialisation was kept &mdash; a null check rather than a dynamic initialiser &mdash; because the reason for the laziness is a static <em>destruction</em> order hazard, and a namespace-scope initialiser would trade it for a static <em>initialisation</em> order hazard. One perfectly predicted branch is far cheaper than a guarded static behind a call.</p>
+      <p><strong>Caching the entity handle.</strong> <code>Vehicle</code> stores its own <code>entt::entity</code>, so component access skips the <code>VehicleID &rarr; entity</code> vector lookup. The handle is stable for the vehicle's whole life: sorting the registry permutes <em>components</em>, not entity identifiers. <code>sizeof(Vehicle)</code> went back up 528 &rarr; 536, four bytes plus padding &mdash; the right trade at this magnitude, since the regression was overwhelmingly indirection rather than storage.</p>
+
+      <div class="callout">
+        <p class="eyebrow">The order of the repair is the transferable part</p>
+        <p>The instinct is to hoist first, because "resolve once per function" is the rule this page states and phase 2's 74% made memorable. But hoisting is hundreds of edits requiring aliasing analysis at every site, while <strong>the constant factor was two header changes</strong>. Measuring after the inlining showed it was worth more than every hoist performed afterwards, and it took about twenty minutes.</p>
+        <p>So the rule needs a qualifier. "Resolve once per function" is right, but it is the <em>second</em> thing to check. First make one access as cheap as it can be: that multiplies through every site whether hoisted or not, and it tells you what the hoisting is worth before you commit to doing it. This phase converted ~850 sites and then recovered half the regression without touching most of them.</p>
+      </div>
+      <p class="aside"><strong>The Debug tree got slower at every step of the repair</strong>, ending at 272s against 217s before. Not a contradiction &mdash; MSVC Debug does not inline, so the change adds call layers there while removing them in release. The clearest justification yet for the two-tree setup: a Debug-only measurement would have rejected the fix that actually worked.</p>
+
+      <h4>Aircraft and road vehicles, read against a drift control</h4>
+      <p>Done as a follow-up, since neither executes on Hilbergen. <code>aircraft_cmd.cpp</code> went from 111 accesses to 54, <code>roadveh_cmd.cpp</code> from 82 to 65. The wentbourne accumulators:</p>
+      <div class="table-scroll">
+      <table>
+        <thead><tr><th>Accumulator</th><th class="num">Before</th><th class="num">After</th><th class="num">Change</th></tr></thead>
+        <tbody>
+          <tr><td><code>game_loop</code></td><td class="num">248,614 ms</td><td class="num">238,671 ms</td><td class="num">&minus;4.0%</td></tr>
+          <tr><td><code>trains</code> <em>(untouched)</em></td><td class="num">125,444 ms</td><td class="num">121,039 ms</td><td class="num">&minus;3.5%</td></tr>
+          <tr><td><code>ships</code> <em>(untouched)</em></td><td class="num">8,415 ms</td><td class="num">8,029 ms</td><td class="num">&minus;4.6%</td></tr>
+          <tr><td><code>road_vehicles</code></td><td class="num">62,874 ms</td><td class="num">59,909 ms</td><td class="num">&minus;4.7%</td></tr>
+          <tr><td><strong><code>aircraft</code></strong></td><td class="num">3,111 ms</td><td class="num">2,719 ms</td><td class="num"><strong>&minus;12.6%</strong></td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p><strong>The untouched accumulators are the useful part of that table.</strong> Trains and ships moved &minus;3.5% and &minus;4.6% with no code change, so roughly 4% of every figure is drift. Netting it out: aircraft improved about 8&ndash;9%, road vehicles did not move beyond noise. Hilbergen agrees from the other direction &mdash; it dropped 9,326 to 9,017 ms on trains-only code that was never touched.</p>
+      <p>Worth keeping as a technique: <strong>a run that reports per-subsystem timings contains its own drift control.</strong> Any subsystem you did not touch is a measurement of the machine, so compare against <em>those</em> rather than against an earlier absolute number. Cheaper than interleaving, and it works on a single sample.</p>
+      <p>The asymmetry between the two is explained by what was <em>possible</em>, not by effort. <code>AircraftController</code> took one function-wide pair of references for 38 accesses, because nothing in it destroys a vehicle &mdash; the crash path only creates an effect vehicle. <code>IndividualRoadVehicleController</code> could not: it calls <code>VehicleEnterTile</code> five times, and while the code immediately after a <code>CannotEnter</code> result writes to the vehicle's own component (so <code>v</code> provably survives), a tile-entry handler destroying <em>some other</em> vehicle would still relocate elements and dangle the reference. That could not be ruled out by inspection, so hoisting was confined to the stretches between those calls &mdash; 17 accesses out of 39.</p>
+      <p><strong>The destruction hazard, not the edit count, is what bounds hoisting.</strong> A function with forty accesses and no destroying calls is one edit; forty accesses with five opaque calls that might destroy something is a dozen careful ones with a worse payoff.</p>
+
+      <h4>Deferred: ships and disaster vehicles</h4>
+      <p><code>disaster_vehicle.cpp</code> (65 accesses) and <code>ship_cmd.cpp</code> (52) are still per-site, deliberately. Ships are 3.4% of the wentbourne game loop and disaster vehicles do not register at all, so the upside is small &mdash; but the real argument is that <strong>phase 6 may make the work unnecessary.</strong> Its whole point is replacing per-vehicle registry lookups with a packed walk; hoisting inside the ship controller now is effort spent on code that is about to change shape.</p>
+      <p>So revisit <strong>after phase 6</strong>, and only if those paths are still per-vehicle then. If phase 6 converts them, the item disappears. If phase 6 turns out narrower than planned &mdash; trains only, say &mdash; these two files are the obvious cleanup, and the recipe is established: check for destroying calls first, hoist function-wide where there are none, confine it to barrier-free stretches where there are.</p>
+
+      <div class="exit"><strong>Exit criteria &mdash; met, with debt</strong> all nine fields migrated and their members deleted; fingerprints unchanged on both fixtures at every step; 102 of 102 tests throughout; <code>sizeof(Vehicle)</code> 544 &rarr; 536. Standing at <strong>+37%</strong> on Hilbergen and <strong>+22%</strong> on wentbourne &mdash; different vehicle mix, both kept because they answer different questions. The remainder is the seam cost the phase was always going to incur: one sparse-set lookup per resolved reference against a direct member offset. Phase 6's packed walk is what pays that back, and it is now measurable against a sane baseline rather than a self-inflicted constant factor.</div>
+    </div>
+  </div>
+
+  <div class="phase" data-aspect="caution">
+    <div class="gutter"><span class="phase-no">05</span><span class="signal"><i></i><i></i><i></i></span></div>
+    <div class="phase-body">
+      <div class="phase-head"><h3>The save staging mechanism</h3><span class="aspect-label">Caution</span><span class="done-tag">Done</span></div>
+      <p><strong>Moved forward from what used to be the last phase.</strong> It was bundled there as "consolidation", but it is not consolidation &mdash; it is infrastructure two later phases depend on. Discovering that is what prompted the reordering.</p>
+      <p>Constraint 3 explains the mechanism: <code>SLE_VAR(Vehicle, x_pos, …)</code> names a member, so a field cannot leave <code>Vehicle</code> while a descriptor reads it.</p>
+
+      <h4>No staging struct was needed</h4>
+      <p>The plan called for a staging struct: members mirroring the descriptor names, gathered from components before a save and scattered back after a load. <strong>That turned out to be unnecessary, and the simpler answer is strictly better.</strong></p>
+      <p><code>SaveLoad</code> holds its address getter as a plain function pointer, and <code>GetVariableAddress</code> const_casts the result before load writes through it. A getter may therefore return the address of <em>anything</em> &mdash; including a field inside a component. And <code>SLE_GENERAL_NAME</code> already separates the savegame field name from the member expression used to find it, so the name stays <code>"subspeed"</code> while the storage moves somewhere else entirely.</p>
+      <p>The result is <code>src/saveload/component_sl.h</code>, three macros wrapping that pattern. Against staging it means no duplicate storage, so <code>sizeof(Vehicle)</code> can actually fall; no gather step, so a field cannot be missed on the way out; and no scatter step, so a component cannot start out stale on the way in &mdash; which is precisely the bug that produced 462 shadow mismatches in phase 4. Here it is not possible, because load writes the component and there is nowhere else to write.</p>
+      <p>Staging is still right when the mapping is not one-to-one: a saved field computed from several component fields, a representation differing between disk and memory, or a component that does not exist for every vehicle. The macros deliberately do not attempt that. The plain case is most of them.</p>
+
+      <h4>What landed</h4>
+      <p><code>subspeed</code> and <code>motion_counter</code> are fully migrated, both members deleted &mdash; the second and third field groups to complete the three-commit sequence, and the first <em>serialised</em> ones.</p>
+      <p>Sequencing that mattered: commit 2 flipped only <strong>pure reads</strong>. Read-modify-write sites were left alone until commit 3, because flipping just the read half of an RMW pair reproduces the exact phase 4 corruption &mdash; read the component, write the member, and staleness propagates instead of being reported. In commit 3 the member disappears and the RMW converts atomically, so the hazard never exists.</p>
+      <p>Commit 3 also turned out to be <strong>compiler-verified in a way commit 2 is not</strong>: delete the member and every remaining reference is a build error. Thirty-nine of them across seven files, each mechanical. That asymmetry is why the descriptor switch and the member deletion were landed together, and why commit 3 is the cheap half of a migration despite touching more lines.</p>
+      <p>Correctness: fingerprints unchanged on both fixtures across seven samples, determinism check passing, 102 of 102 tests. Timing: <strong>no measurable change</strong> &mdash; six Hilbergen samples gave a minimum of 7,473 ms against 7,153 ms before, inside the ~7% band, with that batch spreading 9.6% on a visibly warm machine. The mechanism that should have helped is real (<code>DoUpdateSpeed</code> went from two registry lookups per call to one, because <code>SyncMotion()</code> did its own) but is too small to resolve at this noise level.</p>
+
+      <h4><code>sizeof(Vehicle)</code> did not move &mdash; again</h4>
+      <p>560 in Debug, 544 in release, before and after removing five bytes of fields. This is the <strong>second</strong> time a removal has been absorbed by padding, so it is a property of the struct rather than a coincidence. Measured offsets after removal: <code>cur_speed</code> 310, <code>acceleration</code> 312, <code>progress</code> 313, <code>waiting_random_triggers</code> 314, <code>random_bits</code> 316, <code>last_station_visited</code> 318, then <code>last_loading_tick</code> at <strong>328</strong> &mdash; an 8-byte-aligned <code>TickCounter</code> now preceded by six bytes of padding. <code>alignof(Vehicle)</code> is 8, and the anchors further down (<code>grf_cache</code> 440, <code>sprite_cache</code> 468) did not move at all.</p>
+      <p><strong>The lesson for the remaining field groups:</strong> <code>Vehicle</code> is padding-rich around its 8-byte-aligned members, so removing small scalars does not shrink it. A size win needs a large contiguous block &mdash; what phase 8 targets in <code>BaseConsist</code> and <code>sprite_cache</code> &mdash; or enough fields removed at once to cross a boundary. The three position fields are 12 bytes together and are the next real candidate. Check with <code>offsetof</code> before predicting.</p>
+
+      <h4>Savegame compatibility: proven versus argued</h4>
+      <p><strong>The reading half is measured.</strong> Both fixtures were written by a stock build; they load in the migrated build and reproduce the baseline fingerprint exactly across seven samples. Since <code>subspeed</code> feeds both the fingerprint and the trajectory, a descriptor reading into the wrong place could not produce a matching 20,000-tick fingerprint.</p>
+      <p><strong>The writing half is argued from the macro expansion</strong>, not measured, because there is no stock build in this tree to load the output. The argument is narrow enough to be solid: the expansion produces a <code>SaveLoad</code> with the same name, type, command and version range as the <code>SLE_VAR</code> it replaced, and only <code>address_func</code> differs &mdash; and the writer derives the field table from exactly those members. That is a statement about literal macro expansion rather than about behaviour, which is why it is acceptable here. It is still weaker than a load test, and a stock binary should be kept around to close it.</p>
+
+      <h4>The save-resume check could not be built, and that is a finding</h4>
+      <p>Standard criterion 4 was implemented as <code>-CheckResume</code> and <strong>does not work</strong>. It fails on unmodified code. Chasing that down produced something more useful than the check:</p>
+      <ul>
+        <li>Runs from the curated fixtures are perfectly deterministic &mdash; Hilbergen at 20,000 ticks has reproduced the same fingerprint on every sample ever taken.</li>
+        <li>Runs from an autosave-on-exit save are <strong>not</strong>. Loading one fixed exit-save file and running 1,000 ticks three times in the same binary gave <code>C3D46F481F656B66</code>, <code>C3D46F481F656B66</code>, <code>7DBAF9A059E04D46</code>.</li>
+      </ul>
+      <p>Confirmed against a build predating any component work, so it is pre-existing. A game resumed from an exit save does not evolve deterministically at all, which makes the comparison meaningless &mdash; and the first diagnosis, "the exit save is not tick-precise", was wrong: tick precision would not fix indeterminate content. This is very likely the same root cause as the phase 0 finding of a few hundred unexplained <code>VEHS</code> bytes: uninitialised state serialised, then fed back on load. <strong>That remains a hypothesis</strong> &mdash; what is measured is the instability, not its source.</p>
+      <div class="callout">
+        <p class="eyebrow">A single differing sample is not evidence</p>
+        <p>The first crossload comparison looked exactly like phase 5 breaking the round-trip: same input file, different fingerprint from the control build. Three more runs showed the same binary disagreeing with itself. The straight-run fingerprints had earned trust over many samples; the resume path never had, and reading one sample from it as a regression would have sent the whole phase chasing a bug that was not there.</p>
+      </div>
+      <div class="callout">
+        <p class="eyebrow">Why this has to come before the tick loop is converted</p>
+        <p>Commit 3 of a field migration &mdash; deleting the member &mdash; is impossible for a serialised field without this. And every field phase 4 still has to move <em>is</em> serialised: <code>progress</code>, <code>cur_speed</code>, <code>direction</code> and the three position fields. So phase 4 cannot finish until this lands, and until it does every migrated field stays in dual-write mode paying the cost phase 4 measured.</p>
+        <p>More sharply: <strong>phase 6 cannot demonstrate its benefit until commit 3 is done.</strong> A view-iterating tick loop reads packed components, which is the point &mdash; but while the members are still authoritative it must also write back to them, and that write-back touches the scattered 560-byte <code>Vehicle</code> for every entity. That is exactly the access pattern the packed walk exists to remove. Converting the loop first would measure packed reads plus scattered writes plus dual-write overhead, and produce a number that means very little.</p>
+      </div>
+      <h4>The narrow de-risk experiment, and why it is being skipped</h4>
+      <p><code>vcache</code>'s commit 3 needed no staging and is now done: the member is gone and the component holds the only copy. It is also read-only in the tick loop, so a view over it could be walked with no write-back at all &mdash; a narrow but clean early measurement of whether packed iteration pays off. That experiment was previously the recommended next step, on the reasoning that the ordering argument for staging-before-loop-conversion is an <em>inference</em>, and this page's inferences have a poor record next to its measurements.</p>
+      <p><strong>Decision: skip it and proceed with staging.</strong> Two reasons, both better than the argument for doing it. First, the ordering argument stopped being merely inferred &mdash; all nine motion fields are now confirmed serialised against the descriptor lists, so commit 3 is blocked for every one of them regardless of what a locality experiment shows. Staging is on the critical path either way, and a null result would not have saved the work. Second, <code>vcache</code> is a weak probe: its reads are two fields out of a 6-byte struct, so a packed walk has almost no data to be dense about. The asymmetry runs badly &mdash; a null result would be weak evidence against phase 6, while only a positive result would have told us much. Spending time on a test that can mostly only fail to inform is the wrong trade when phase 6 measures both dispatch variants directly and definitively.</p>
+      <p>The de-risking effort is better spent on the <strong>sort-frequency measurement</strong> described under phase 6, which is cheaper still and answers a question that actually gates a design decision.</p>
+      <div class="exit"><strong>Exit criteria</strong> a save written by the staged build loads in unmodified OpenTTD; <code>subspeed</code> and <code>motion_counter</code> deleted from <code>Vehicle</code> with their shadow mode removed; the resulting <code>sizeof(Vehicle)</code> and timing change recorded.<br><br>Temper the expectation with what finishing <code>vcache</code> measured: <strong>deleting a member is not automatically a timing win.</strong> It gives back the dual-write cost only where those writes were hot, and it shrinks <code>sizeof(Vehicle)</code> only if the bytes were not already absorbable as padding. The motion fields are written per tick, so the first mechanism is genuinely present here in a way it was not for <code>vcache</code> &mdash; but the second still needs an <code>offsetof</code> check rather than an assumption.</div>
+    </div>
+  </div>
+
+  <div class="phase" data-aspect="danger">
+    <div class="gutter"><span class="phase-no">06</span><span class="signal"><i></i><i></i><i></i></span></div>
+    <div class="phase-body">
+      <div class="phase-head"><h3>Devirtualising the tick dispatch</h3><span class="aspect-label">Danger</span><span class="done-tag">Done</span></div>
+      <div class="callout">
+        <p class="eyebrow">Result: the phase that was supposed to pay for phase 4 paid nothing</p>
+        <p>Three variants were built and measured against each other, interleaved run for run. <strong>Devirtualising the dispatch is worth zero. Typed passes are worth &minus;4%.</strong> The only configuration that improved anything did so by deleting a correctness property rather than by exploiting the ECS layout &mdash; and only on one of the two fixtures.</p>
+        <p>Everything below the first two sub-headings was written before the measurements and is kept as written, because the gap between the prediction and the outcome is the most useful thing this phase produced.</p>
+      </div>
+      <p>This is where phase 4 gets paid for. Phase 4 moves the fields and accepts a regression; this phase converts the loop to iterate views, so the registry lookup is amortised across a packed walk instead of repeated per vehicle. Judge the two together as well as separately &mdash; the pair is only worthwhile if this phase's gain exceeds phase 4's loss, and knowing both halves is the whole point of having run them apart.</p>
+      <p><strong>The bill is now known: +37% on Hilbergen, +22% on wentbourne.</strong> That is what a packed walk has to beat for the pair to be worth having. It is a real target rather than a guess, and it is a fair one &mdash; the self-inflicted part of phase 4's cost has already been repaired, so what remains is genuinely the seam this phase exists to remove.</p>
+      <p>Replacing <code>virtual bool Tick()</code> plus <code>switch (v-&gt;type)</code> with typed passes is the largest structural win available &mdash; and it forces a decision you should make deliberately, because the two options differ in kind, not degree:</p>
+      <ul>
+        <li><strong>Variant A, order-preserving.</strong> One pass in ascending <code>VehicleID</code>, replacing virtual dispatch with a type tag and a switch. Smaller win; the fingerprint still matches the baseline.</li>
+        <li><strong>Variant B, typed passes.</strong> Four separate views, one per vehicle type. Much better locality and branch behaviour &mdash; but it changes the interleaving of <code>Random()</code> draws, so the fingerprint <em>will</em> change and a save made by stock OpenTTD will no longer continue identically. The <em>format</em> still loads perfectly; the <em>trajectory</em> diverges.</li>
+      </ul>
+      <p>Per-consist cost is the measure that governs here: on the corrected asserts-off baseline that is 4061 ns for trains against 1986 ns for road vehicles, so trains lead on both denominators and are the clear first target. Road vehicles remain a worthwhile second &mdash; 28% of the game loop from a fourteenth of the parts &mdash; but by a factor of two, not the near tie the assert-enabled numbers implied.</p>
+      <p><strong>Both variants will be built and A/B'd against the same save.</strong> That is the plan, and the comparison is the most interesting single measurement left in the project: the gap between them is a price tag on the determinism constraint itself &mdash; the thing constraint 1 says the codebase cannot give up. Very few projects get to measure what their hardest invariant costs them.</p>
+
+      <h4>Variant B is not merely "different from master" &mdash; it is not self-consistent</h4>
+      <p>An earlier draft of this page understated this, and the distinction changes what variant B may be used for. An unsorted EnTT view walks the packed array, and <strong>packed order is a function of history, not of the live set</strong> &mdash; pinned by a test rather than assumed, in <code>entt_smoke.cpp</code>'s "default storage order is history dependent". The consequence is divergence not just from stock OpenTTD but from <em>itself</em>:</p>
+      <ul>
+        <li>Play to tick <i>N</i> and keep going: packed order reflects the session's whole create/destroy history.</li>
+        <li>Play to tick <i>N</i>, save, quit, reload, keep going: the registry is rebuilt from the pool in ascending index order, so packed order is fresh.</li>
+      </ul>
+      <p>Same savegame, same live vehicles, two different visit orders, two different futures. That breaks save-resume equivalence &mdash; the second of the two determinism requirements &mdash; and would desync a multiplayer join instantly, because a joining client builds its registry fresh from the transferred savegame while the server carries its accumulated order.</p>
+      <div class="callout">
+        <p class="eyebrow">The existing determinism check cannot catch this</p>
+        <p>The harness runs the same save twice and compares fingerprints. Both runs start from the same fresh load, so both get the same order and the check passes &mdash; variant B would look clean.</p>
+        <p>So phase 6 needs one more tool, and building it is part of the phase's cost: <strong>a save-resume equivalence check.</strong> Run <i>N</i> ticks then save, reload and run <i>M</i> more; separately run <i>N</i>+<i>M</i> straight through; compare final fingerprints. Variant A must match. Variant B will not, and that failing check is the phase's evidence rather than a bug to chase.</p>
+        <p><strong>Phase 5 tried to build this and could not</strong> &mdash; it fails on unmodified code, because a game resumed from an autosave-on-exit save does not evolve deterministically. So phase 6 inherited three pieces of work, in order: answer the uninitialised-state question (a tick-precise save of indeterminate content would still not reproduce); add <code>-vnull:save_at=N</code> to the null video driver, since autosave-on-exit fires at process exit rather than a tick boundary; and only then wire the check up as variant A's gate.</p>
+    <p><strong>Descoped, deliberately.</strong> All three were dropped: phase 6 gates on the fingerprint checks every phase so far has used. This is a measurement fork rather than a shippable branch, and the check would have cost a tick-precise save plus the uninitialised-state investigation to produce evidence for a property that can be argued from the code and is already pinned by a unit test. What is lost is real and is stated here so nobody later mistakes it for a strong guarantee: variant A's order preservation now rests on the fingerprint alone.</p>
+    <p><strong>And phase 6 then demonstrated exactly why the gap matters.</strong> Variant C abandons canonical order outright &mdash; and reproduced its own fingerprint perfectly across five runs, passed all 102 tests, and reported <code>registry_valid</code> 1. Every check on this page says it is clean. It is not. Nothing in the harness looks at the one thing it breaks.</p>
+      </div>
+      <p>Given that, variant B is scoped as a <strong>measurement branch, not a foundation.</strong> Nothing gets built on top of it and phase 7 continues to target variant A. It is playable single-player &mdash; a player cannot observe that resuming produced a different future &mdash; which satisfies the ground rule, but it is not a base for further work.</p>
+
+      <h4>Variant A has its own risk, and it is worth pricing first</h4>
+      <p>Variant A gets locality only if the storage is actually sorted; iterating the pool and looking up components per vehicle is what the code does <em>now</em>, and phase 4 measured that at no locality benefit. So variant A means <code>SortVehicleRegistry()</code> running whenever the registry is dirty &mdash; O(<i>n</i> log <i>n</i>) on the live set, around 1.4 million comparisons per sort on wentbourne. It is correct and deterministic, so this is purely a cost question, and the cost depends entirely on <strong>how often the dirty flag fires</strong>. Rare structural churn amortises to nothing; churn every few ticks could swamp the locality win outright and make variant A pointless.</p>
+      <p><strong>Measure that first.</strong> Instrument <code>SortVehicleRegistry()</code> with a call count and accumulated time, emitted as <code>ecs.sorts</code> and <code>ecs.sort_ms</code>. One wentbourne run then says whether variant A is viable at all &mdash; an hour's work that could change the whole shape of the phase, and this page's record is that the cheap measurement beats the confident argument.</p>
+      <p>If the sort does dominate, the honest options are to accept pool-order iteration with no locality win (variant A becomes just devirtualisation, still worth something), or to note that canonical order and packed locality are fundamentally in tension here and let variant B's number speak to what that tension costs. Both are legitimate results; neither is a failure of the phase.</p>
+
+      <h4>The sort, measured &mdash; and the fixtures disagree by 74&times;</h4>
+      <p>Done first, and worth doing first. <code>SortVehicleRegistry()</code> now records call count, sort count, time, and the create/destroy churn that sets the dirty flag.</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th></th><th>Hilbergen</th><th>wentbourne</th></tr></thead>
+          <tbody>
+            <tr><td>Vehicle parts</td><td class="num">2,818</td><td class="num">85,259</td></tr>
+            <tr><td>Ticks finding the registry dirty</td><td class="num">88.3%</td><td class="num">2.56%</td></tr>
+            <tr><td>Churn per tick</td><td class="num">1.09</td><td class="num">0.107</td></tr>
+            <tr><td>Mean sort</td><td class="num">35.9 &micro;s</td><td class="num">1,623 &micro;s</td></tr>
+            <tr><td><strong>Share of the game loop</strong></td><td class="num"><strong>10.4%</strong></td><td class="num"><strong>0.14%</strong></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p><strong>The small fixture is the expensive one, by 74&times; in relative terms.</strong> The O(<i>n</i> log <i>n</i>) is not what decides this: the 30&times; larger save pays 5&times; more <em>per sort</em> and still comes out two orders of magnitude cheaper overall, because it sorts 128 times where Hilbergen sorts 17,665. Sort cost is set by how often the dirty flag fires, and that is a property of the savegame rather than of its size. The churn is create/destroy balanced almost exactly &mdash; 21,771 against 21,765 on Hilbergen &mdash; which is the signature of short-lived effect vehicles rather than of players building things.</p>
+      <p>So the instruction two paragraphs above &mdash; "one wentbourne run then says whether variant A is viable at all" &mdash; was <strong>exactly the wrong way to answer the question</strong>. wentbourne alone would have reported the sort as free and hidden the entire cost. Run both fixtures whenever the answer might depend on churn rather than on scale.</p>
+      <div class="callout">
+        <p class="eyebrow">Sorting the key storage is not sorting the registry</p>
+        <p>Found while instrumenting, and it would have quietly cost the phase its headline. <code>registry.sort&lt;VehicleRef&gt;()</code> orders the <code>VehicleRef</code> storage and nothing else &mdash; the components are separate sparse sets with their own packed arrays, so a view over <code>VehicleMotion</code> would have walked them with no locality at all, which is the entire point of variant A. Matching them is <code>sort_as</code>, one linear pass per storage, and it adds about half again on top of the key sort.</p>
+        <p>The trap worth recording: <strong>a component added at registration and forgotten in the sort is not a correctness bug</strong> &mdash; nothing iterates a component storage for game state yet &mdash; <strong>but it silently costs the locality the phase exists to buy.</strong> No test catches that, and the fingerprint cannot: the order is right, the data is right, only the layout is wrong.</p>
+      </div>
+      <p>One more result from the same instrumentation, kept because of its shape. The array is nearly sorted, which is the textbook case for insertion sort over introsort &mdash; EnTT takes the algorithm as a parameter, so it is a one-word change. On Hilbergen it was <strong>5.3&times; faster</strong>. On wentbourne it was <strong>16.8&times; slower</strong>, because swap-and-pop moves the last element into each hole and one destruction in an 85,000-element array displaces an element by up to 85,000 positions. Left as <code>std_sort</code>. <em>The optimisation that is obviously right for the fixture you are iterating on can be catastrophic on the one you are not.</em></p>
+
+      <h4>Variant A: no detectable change, and the premise was wrong</h4>
+      <p>Built as specified &mdash; a static dispatcher switching on <code>v-&gt;type</code> and calling the handler on the concrete class, every one of which is <code>final</code>, so the target is statically known. The change was verified in the disassembly rather than assumed: the control's <code>call qword ptr [rax+70h]</code> became a jump table with six direct tail-jumps.</p>
+      <p>Five interleaved pairs on Hilbergen, two on wentbourne, fingerprints identical on all fourteen runs.</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Fixture</th><th></th><th>Control</th><th>Variant A</th></tr></thead>
+          <tbody>
+            <tr><td>Hilbergen</td><td><code>game_loop</code> median</td><td class="num">9,245 ms</td><td class="num">9,247 ms</td></tr>
+            <tr><td></td><td>normalised to <code>landscape</code></td><td class="num">16.12</td><td class="num">16.12</td></tr>
+            <tr><td>wentbourne</td><td>normalised to <code>landscape</code></td><td class="num">43.95</td><td class="num">43.86</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p><strong>Nothing</strong>, to three significant figures on one fixture and 0.2% on the other. The disassembly explains why, and the explanation invalidates the premise: <strong>a switch on a type tag is itself an indirect branch.</strong> The control pays two dependent loads and one indirect call; variant A pays one direct call, one indirect jump through the table, and one direct tail-jump. The indirection was not removed, it was relocated &mdash; and against handler bodies costing ~550 ns per vehicle-tick, neither sequence is visible. The vtable target was well predicted anyway, since vehicles of one type come in long runs of consecutive <code>VehicleID</code>.</p>
+      <div class="callout">
+        <p class="eyebrow">The drift control caught a false positive</p>
+        <p>The control's fastest Hilbergen run came in at 9,010 ms against variant A's 9,221 &mdash; a clean-looking 2.3% regression, and exactly the sort of figure that gets written down. But that run also had the fastest <code>landscape</code> and the fastest <code>economy</code>, both byte-identical code in the two binaries. The machine was fast, not the code. <strong>The untouched accumulators are not a sanity check, they are the denominator.</strong></p>
+      </div>
+
+      <h4>Variant B: helps the rare types, taxes the common one</h4>
+      <p>One typed pass per vehicle type, each entity carrying its identity in a storage private to its type, so the vehicle type becomes a template parameter and every per-type test in the tick body folds away at compile time. The per-subsystem split on wentbourne is the whole story:</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Accumulator</th><th>Variant A</th><th>Variant B</th><th>Change</th></tr></thead>
+          <tbody>
+            <tr><td><code>game_loop</code></td><td class="num">234,444 ms</td><td class="num">244,587 ms</td><td class="num">+4.3%</td></tr>
+            <tr><td><code>trains</code> &mdash; 88% of parts</td><td class="num">119,405 ms</td><td class="num">125,297 ms</td><td class="num">+4.9%</td></tr>
+            <tr><td><code>road_vehicles</code> &mdash; 6.4%</td><td class="num">58,521 ms</td><td class="num">59,180 ms</td><td class="num">+1.1%</td></tr>
+            <tr><td><code>ships</code> &mdash; 3.3%</td><td class="num">7,759 ms</td><td class="num">7,072 ms</td><td class="num">&minus;8.9%</td></tr>
+            <tr><td><code>aircraft</code> &mdash; 1.8%</td><td class="num">2,665 ms</td><td class="num">2,374 ms</td><td class="num">&minus;10.9%</td></tr>
+            <tr><td><code>landscape</code> <em>(untouched)</em></td><td class="num">5,356 ms</td><td class="num">5,281 ms</td><td class="num">&minus;1.4%</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p><strong>The gain is proportional to how <em>rare</em> the type is, and the cost lands on the common one.</strong> Aircraft are 1,529 parts scattered through 85,259, so the old pool walk touched one every ~56 slots; a typed pass makes them dense and they gain 11%. Trains are 88% of the pool, so the walk was already dense in trains &mdash; the typed pass buys nothing and still pays for its snapshot and re-lookup. Weighted by where the time actually is, that is a net 4.3% loss. Hilbergen, at 97% trains, is the same effect at its extreme.</p>
+      <p>Measured against the phase 0 baseline the split is starker still: variant B brings <code>ships</code> to +1.0% and <code>aircraft</code> to +1.4% of a pre-migration binary &mdash; <strong>it pays the entire ECS seam cost back for the rare types</strong> &mdash; while pushing trains from +21.7% to +27.7%.</p>
+      <div class="callout">
+        <p class="eyebrow">Variant B is deterministic after all, and the section above is wrong about why</p>
+        <p>"Not self-consistent" is true only if the sort is dropped. Variant B as built keeps <code>SortVehicleRegistry()</code> and sorts the typed storages with everything else, so each pass runs in ascending <code>VehicleID</code> &mdash; an order that is a pure function of the live set, exactly like <code>PoolIterator</code>. It reproduced <code>AB556BAEFF70ABE4</code> across five Hilbergen runs and <code>18AA2463FDF40C94</code> across both wentbourne runs.</p>
+        <p>So there are two variant Bs and this page conflated them. <strong>B-sorted</strong> breaks continuation of a stock savegame and nothing else. <strong>B-unsorted</strong> &mdash; variant C below &mdash; is the one that is genuinely not save-resume equivalent, and it is also the only configuration in the phase that removes a cost rather than adding one.</p>
+      </div>
+
+      <h4>Variant C: typed passes with the sort abandoned</h4>
+      <p>The other variant B. Typed passes exactly as B, but <code>SortVehicleRegistry()</code> does nothing at all and iteration follows raw packed order. Built to price canonical order, not to be adopted.</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Hilbergen, 5 interleaved rounds</th><th>Median</th><th>Normalised</th><th>Sort</th><th>vs A</th><th>vs phase 0</th></tr></thead>
+          <tbody>
+            <tr><td>Variant A</td><td class="num">9,317 ms</td><td class="num">16.05</td><td class="num">963 ms</td><td class="num">&mdash;</td><td class="num">+41.6%</td></tr>
+            <tr><td>Variant B</td><td class="num">9,737 ms</td><td class="num">16.64</td><td class="num">1,049 ms</td><td class="num">+4.5%</td><td class="num">+48.0%</td></tr>
+            <tr><td><strong>Variant C</strong></td><td class="num"><strong>8,485 ms</strong></td><td class="num"><strong>14.84</strong></td><td class="num"><strong>0 ms</strong></td><td class="num"><strong>&minus;8.9%</strong></td><td class="num"><strong>+29.0%</strong></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Within-group spreads were under 1.5%, so this is well clear of the noise floor. <strong>Variant C is the fastest configuration this project has produced since phase 0.</strong> Almost all of it is the sort: A spends 963 ms sorting and C spends none, against a game-loop difference of 832 ms. B's typed-pass tax is still there in C; it is simply outweighed.</p>
+      <p>And on wentbourne it evaporates &mdash; C at 46.17 normalised against B's 46.11 and A's 44.49, <strong>indistinguishable from B</strong>, exactly as the 0.14% sort share predicts. So variant C is <strong>a fixture-dependent 9% or nothing</strong>, decided by the churn-rate finding rather than by anything about typed passes.</p>
+      <div class="callout">
+        <p class="eyebrow">Variant C looks completely clean and is not</p>
+        <p>It reproduced <code>87AFB8A437E2B2F1</code> across five Hilbergen runs and <code>9FA63EFAD65E1545</code> across both wentbourne runs, passed 102 of 102 tests, reported <code>registry_valid</code> 1, and its exit save loads and runs in a variant A binary. Every check this project has says it is fine.</p>
+        <p>It is fine only because every run starts from the same fresh load and therefore evolves the same packed order. The thing variant C actually breaks &mdash; that a resumed game continues on a different trajectory than one played straight through &mdash; is invisible to all of it, <strong>including the fingerprint</strong>. This is the save-resume gap, no longer hypothetical.</p>
+        <p>Worth its own line: <strong>the regression suite does not notice variants B or C at all.</strong> A change that alters the trajectory of every savegame in existence passes <code>regression</code>, <code>stationlist</code>, <code>gs</code> and <code>gs_compat</code> without a murmur. A green test run is not evidence that behaviour is unchanged.</p>
+      </div>
+
+      <h4>What the three variants together say</h4>
+      <ul>
+        <li><strong>Devirtualising the dispatch is worth nothing</strong> (A). A switch on a type tag is an indirect branch, same as the vtable it replaced.</li>
+        <li><strong>Typed passes are worth something only for rare types</strong> (B). Aircraft gained 11% and trains lost 5% &mdash; and trains are 88% of the pool.</li>
+        <li><strong>The ordering discipline is the one real cost, and only on high-churn saves</strong> (C). Removing it is worth 8.9% on Hilbergen and nothing on wentbourne.</li>
+      </ul>
+      <p>The uncomfortable conclusion is that <strong>the largest single win available in this phase came from deleting a safety property rather than from anything the ECS layout provides.</strong> The packed walk, the typed views, the devirtualised dispatch &mdash; the entire thesis of phase 6 &mdash; contributed nothing measurable or worse.</p>
+      <p>There is a cheaper way to get most of it that keeps determinism, and this phase did not pursue it: the sort currently redoes O(<i>n</i> log <i>n</i>) over the whole live set every time one smoke puff appears. Inserting the handful of new entities in place would target the same 963 ms without giving up canonical order. That is a fix to the sort rather than to the tick loop, and on the Hilbergen evidence it is worth more than everything phase 6 tried.</p>
+      <div class="callout">
+        <p class="eyebrow">A caveat that bounds all of the above</p>
+        <p>Variants B and C diverge from A at tick one, so after 5,000 ticks they are simulating different worlds &mdash; different routes, different depot occupancy, different pathfinder work. The comparison is not strictly like for like. Workload counts land reassuringly close (85,259 parts in every wentbourne run), and the large effects reproduced across pairs, but the 1.1% on road vehicles should not be quoted.</p>
+        <p>This is unavoidable rather than a flaw in the method. Any change that reorders the simulation has no identical trajectory to be A/B'd against. It is the one measurement in this project where the fingerprint gate and the timing comparison are mutually exclusive.</p>
+      </div>
+
+      <div class="exit"><strong>Exit criteria</strong> met for all three variants against the descoped criteria. Variant A: fingerprints unchanged on both fixtures, 102 of 102 tests, the 3,000-tick Debug gate at <code>3C94DD1E5614C300</code>. Variants B and C: save format verified by cross-loading into a variant A binary, all three configurations build and play, fresh fingerprints captured and shown stable across five and two runs each, and interleaved timings on both fixtures. The save-resume check was dropped &mdash; and in the event it would have <em>passed</em> for variant B rather than failed, which is the outcome this page did not anticipate.</div>
+    </div>
+  </div>
+
+  <div class="phase" data-aspect="danger">
+    <div class="gutter"><span class="phase-no">07</span><span class="signal"><i></i><i></i><i></i></span></div>
+    <div class="phase-body">
+      <div class="phase-head"><h3>Economy and cargo</h3><span class="aspect-label">Danger</span></div>
+      <p><code>GameLoopEconomy</code> is a genuine cost centre, but it is the most entangled target here: <code>LoadUnloadStation()</code> walks stations and consists together, and <code>CargoPacket</code> and <code>VehicleCargoList</code> are themselves pooled, allocating structures with their own lifetime rules. Cargo distribution is also order-sensitive in a way position updates are not &mdash; who loads first changes who gets the cargo.</p>
+      <p>Attempt this only once phases 03 and 04 have made shadow mode routine, and consider stopping at cargo <em>aging</em> (a clean per-vehicle counter) without touching cargo <em>movement</em>. Knowing where to stop is part of the exercise.</p>
+      <div class="exit"><strong>Exit criteria</strong> as phase 05, plus: cargo totals and company balances match a stock run tick-for-tick under the order-preserving dispatch build.</div>
+    </div>
+  </div>
+
+  <div class="phase" data-aspect="caution">
+    <div class="gutter"><span class="phase-no">08</span><span class="signal"><i></i><i></i><i></i></span></div>
+    <div class="phase-body">
+      <div class="phase-head"><h3>Hollowing out <code>Vehicle</code></h3><span class="aspect-label">Caution</span></div>
+      <p>Consolidation rather than new capability. The staging mechanism that used to live here became phase 5, because phases 4 and 6 both depend on it; what remains here is the cleanup it enables. What stays in <code>Vehicle</code> is identity, cold accounting, and the intrusive chains that the consist logic legitimately needs.</p>
+      <p>Phase 2 handed one job forward: <code>sprite_cache</code> cannot move earlier because part of it is serialised for effect and disaster vehicles, so it needs the staging struct from phase 5.</p>
+      <p>A second target is already measured. <code>Vehicle</code> <em>inherits</em> <code>BaseConsist</code>, so all 88 bytes of it are carried by every part &mdash; while its contents (name, timetable and lateness counters, depot unbunching timestamps, service interval, current order indices) are only meaningful on the front vehicle. On wentbourne that is 71,360 of 85,259 parts holding data that means nothing to them:</p>
+      <div class="table-scroll">
+        <table>
+          <tbody>
+            <tr><td><code>sizeof(BaseConsist)</code></td><td class="num">88 bytes</td></tr>
+            <tr><td>Parts carrying it needlessly</td><td class="num">71,360 of 85,259</td></tr>
+            <tr><td>Total footprint / dead weight</td><td class="num">~7.2 MB / ~6.0 MB</td></tr>
+            <tr><td>Share of the 552-byte <code>Vehicle</code></td><td class="num">16%</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Moving it to a component held only by consists is the clearest single win available here, and <code>sizeof.BaseConsist</code> in the benchmark report tracks it. Worth being honest that this is a <em>memory</em> win and not automatically a speed one: whether removing 6 MB helps the tick loop depends on whether those bytes share cache lines the loop actually touches.</p>
+      <p>This is also the natural place to write up what you learned, while the reasoning is still fresh.</p>
+      <div class="exit"><strong>Exit criteria</strong> as phase 06, plus: save format coupling isolated to one translation unit; final <code>sizeof</code> and timing table complete against the phase 00 baseline.</div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>What to leave alone</h2>
+  <div class="two-col">
+    <div class="panel">
+      <h3>The consist chain</h3>
+      <p>Train logic is intra-consist: it walks <code>First()</code> and <code>Next()</code> constantly. ECS buys locality <em>across</em> entities, which is orthogonal to that access pattern. Converting the chain adds indirection and buys nothing.</p>
+    </div>
+    <div class="panel">
+      <h3>NewGRF variable resolution</h3>
+      <p><code>newgrf_engine.cpp</code> alone contains 201 vehicle field reads in a wide switch over variable IDs. It is a cold path per callback, it touches nearly every field, and it is author-facing API surface. Extremely high cost, no measurable gain.</p>
+    </div>
+    <div class="panel">
+      <h3>Saveload descriptors</h3>
+      <p>The one thing the ground rules forbid changing. Keep the lists exactly as they are and let the staging struct absorb the layout change.</p>
+    </div>
+    <div class="panel">
+      <h3>YAPF and the link graph</h3>
+      <p>Both already have purpose-built data structures &mdash; YAPF its own node arena, the link graph its own background job. Different optimisation problems that an ECS does not address.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>What to actually expect</h2>
+  <p class="prose">Worth calibrating now, so the measurements read as success rather than disappointment.</p>
+  <p class="prose">The draft of this page expected "cheap sweeps to improve dramatically". Phases 2 and 3 found no such sweeps: the full-pool loops are nearly all cold, running on user actions or savegame load rather than per tick. The only hot full-pool loop is <code>CallVehicleTicks</code>, so the whole win has to come from there.</p>
+  <p class="prose">And the accessor seam has a measured price. Phase 3 moved one small struct behind one and cost about <strong>2.4%</strong> on Hilbergen &mdash; a registry lookup per vehicle per tick. Phase 4, moving nine hot fields, cost <strong>+37%</strong> after repair and +90% before it. So a phase that adds accessors without also converting the loop to iterate views will lose, and lose big. Expect the gains to come from packed iteration and devirtualised dispatch, not from relocating fields.</p>
+  <p class="prose">A corollary worth internalising, because it was learned the expensive way: <strong>most of that 90% was not the seam at all.</strong> It was three non-inlinable function calls per field access, fixed by two header changes. Before concluding that an abstraction is inherently costly, check whether the compiler can actually see through it &mdash; the architectural cost and the constant factor look identical in a profile and have completely different fixes.</p>
+  <div class="callout">
+    <p class="eyebrow">Where it actually stands, seven phases in</p>
+    <p>Kept as a running tally, because the individual phase numbers are easy to read more favourably than the sum deserves. Against the phase 0 baseline, on the shipping configuration (variant A):</p>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th></th><th>Phase 0</th><th>Now</th><th>Change</th></tr></thead>
+        <tbody>
+          <tr><td>Hilbergen <code>game_loop</code></td><td class="num">6,580 ms</td><td class="num">9,317 ms</td><td class="num">+41.6%</td></tr>
+          <tr><td>wentbourne <code>game_loop</code></td><td class="num">195,001 ms</td><td class="num">234,444 ms</td><td class="num">+20.2%</td></tr>
+          <tr><td><code>sizeof(Vehicle)</code></td><td class="num">544 B</td><td class="num">536 B</td><td class="num">&minus;1.5%</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>So: <strong>the tick loop is 20&ndash;40% slower than where it started, and the structural win so far is eight bytes.</strong> Roughly a third of the Hilbergen regression is the sort &mdash; a cost the baseline did not pay and which buys nothing detectable today. Phase 6, designated as the phase that would pay phase 4 back, paid nothing.</p>
+    <p>That is not a failure of the exercise, but it is the honest position, and it puts real weight on phase 7. <code>BaseConsist</code> is 88 bytes carried by every part and meaningful on 16% of them &mdash; about 6 MB of dead weight on wentbourne. It is the first remaining item with a prize large enough to change this arithmetic.</p>
+  </div>
+  <p class="prose">The main tick loop will improve considerably less than a naive cache-locality argument suggests. It does real work per vehicle: chain walking, pathfinder entry, NewGRF callbacks, sound decisions. Memory layout is one term in that sum, not the whole of it, so think tens of percent on the loop rather than a multiple. A headline framerate number is the wrong goal, because on large saves OpenTTD is frequently bound by systems this plan deliberately does not touch. The right goals are the per-element timings, the <code>sizeof(Vehicle)</code> reduction, and a hot path whose structure you can explain.</p>
+  <div class="callout">
+    <p class="eyebrow">Be disciplined about noise, and note that it is not uniform</p>
+    <p><strong>Within a batch Hilbergen looks precise; across batches it is not.</strong> Two earlier figures on this page were both wrong. A 15% band, measured with compiles running in parallel, was badly pessimistic and would have dismissed a real regression as noise. The 0.3% that replaced it was badly optimistic: it came from a two-sample batch, and <strong>two samples cannot estimate a spread</strong> &mdash; they produce exactly one gap, and a small gap reads as precision when it is really one draw. Eight consecutive runs of an unchanged binary spanned <strong>6.8%</strong>.</p>
+    <p>Each batch is internally tight (0.5&ndash;0.9%) but batches sit at different levels, consistent with thermal state and background activity drifting over minutes. So tight-within-batch is not evidence of precision. The working rule: <strong>at least five samples, compare minima rather than medians</strong> (the minimum is the least-contaminated sample; a median tracks the batch's thermal level as much as the code), discard the first run after a build, and treat anything under about 7% on Hilbergen as unproven. To do better, interleave A and B rather than taking more samples of each &mdash; batch drift is the dominant term, and only interleaving cancels it.</p>
+    <p><strong>There is a cheaper trick, and it works on a single sample: compare against a subsystem you did not change.</strong> Every run reports trains, road vehicles, ships and aircraft separately, so if a change touched only aircraft code, the other three are a measurement of the machine. Hoisting the aircraft accessors showed &minus;4.0% on the game loop &mdash; which reads as a solid win until you notice trains and ships, both untouched, moved &minus;3.5% and &minus;4.6%. Netted against those controls the real effect was about &minus;8&ndash;9% on aircraft and nothing at all on road vehicles. Pick a fixture that exercises what you changed <em>and</em> something you didn't, and read the difference between them rather than the absolute numbers.</p>
+    <p>But <strong>long runs are much noisier than short ones</strong>, which inverts the usual intuition. wentbourne takes three and a half minutes and repeats to only 10%, climbing monotonically across consecutive runs in a way that looks like thermal throttling. So use short runs for precision and long runs for coverage, take three samples and a median, discard the first run after a build, and interleave A/B samples rather than running all of one and then all of the other.</p>
+  </div>
+  <p class="prose">One more lesson, added after phase 6 because it is the one that keeps recurring: <strong>every confident structural claim on this page has lost to measurement, and every cheap measurement has beaten a confident argument.</strong> The virtual call was a textbook target worth nothing. The packed walk was the whole thesis and cost 4%. The sort was assumed to amortise away and costs 10% on one fixture and 0.14% on the other. The insertion sort was obviously right and was 17&times; wrong. In each case the code reading was reasonable and the answer was elsewhere &mdash; usually in a constant factor, a branch predictor, or a property of the savegame rather than of the program.</p>
+  <p class="prose">And for a learning fork, the most valuable outcome is not in any of those columns. Applying ECS to a hostile real-world codebase &mdash; one with a shared RNG, a frozen wire format, a save compatibility guarantee stretching back twenty years, and a thousand raw pointers &mdash; teaches you far more about where the model actually earns its keep than any greenfield project can. The constraints are the curriculum.</p>
+</section>
+
+<footer>
+  <p>Grounded in a read of <code>src/core/pool_type.hpp</code>, <code>src/vehicle_base.h</code>, <code>src/vehicle.cpp</code>, <code>src/base_consist.h</code>, <code>src/saveload/saveload.h</code>, <code>src/saveload/vehicle_sl.cpp</code>, <code>src/framerate_type.h</code>, and <code>src/video/null_v.cpp</code>, against EnTT's <code>docs/md/entity.md</code> and, for the ordering claims, its <code>entity/sparse_set.hpp</code>. The reference-stability claims in phase 4 are from its <code>entity/storage.hpp</code>. Line references are to master at 3a33cd64c9 and will drift.</p>
+  <p>All figures are measured, on two savegames using <code>benchmark/run-benchmark.ps1</code>, and are updated as each phase lands. Where a figure has been superseded the earlier claim is kept alongside it rather than quietly replaced, because most of what this exercise has taught is visible only in the corrections. The in-repo version of this plan lives at <code>docs/ecs-migration-plan.md</code> and the harness is documented in <code>benchmark/README.md</code>; both carry more operational detail than this page.</p>
+  <p>Scoped for a private fork. OpenTTD's <code>CONTRIBUTING.md</code> declines AI-generated contributions upstream, and nothing here is intended for the main repository.</p>
+</footer>
+
+</div>
+
