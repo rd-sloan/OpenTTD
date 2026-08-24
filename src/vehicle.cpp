@@ -386,7 +386,7 @@ Vehicle::Vehicle(VehicleID index, VehicleType type) : VehiclePool::PoolItem<&_ve
 	/* Keep the ECS registry in lockstep with the pool. This is the only creation
 	 * hook needed: Pool::CreateAtIndex forwards to this constructor, so savegame
 	 * load comes through here too. @see vehicle_registry.cpp */
-	this->entity = RegisterVehicleEntity(index);
+	this->entity = RegisterVehicleEntity(index, type);
 
 	this->type               = type;
 	this->coord.left         = INVALID_COORD;
@@ -1095,6 +1095,131 @@ static bool TickVehicle(Vehicle *v)
 	}
 }
 
+/**
+ * The per-vehicle work that follows a successful tick: cargo ageing and running sounds.
+ *
+ * Factored out so that both variants run identical code here, which is what makes their
+ * measurements comparable. The type is a template parameter rather than a value, so every
+ * per-type test below folds away at compile time in variant B while variant A pays for
+ * the switch it has always paid for.
+ *
+ * @tparam T The concrete vehicle class.
+ * @tparam Type Its #VehicleType.
+ * @param v The vehicle, known to have survived its tick.
+ */
+template <typename T, VehicleType Type>
+static void AgeCargoAndPlaySound(T *v)
+{
+	static_assert(Type == VehicleType::Train || Type == VehicleType::Road || Type == VehicleType::Ship || Type == VehicleType::Aircraft,
+			"Effect and disaster vehicles carry no cargo and make no running sound");
+
+	Vehicle *front = v->First();
+
+	/* One lookup for three reads. Resolving the accessor per read is what
+	 * cost 74% of the game loop in phase 2. @see ecs_shadow.h */
+	const uint16_t cargo_age_period = v->GetVehicleCache().cached_cargo_age_period;
+	if (cargo_age_period != 0) {
+		v->cargo_age_counter = std::min(v->cargo_age_counter, cargo_age_period);
+		if (--v->cargo_age_counter == 0) {
+			v->cargo.AgeCargo();
+			v->cargo_age_counter = cargo_age_period;
+		}
+	}
+
+	/* Do not play any sound when crashed */
+	if (front->vehstatus.Test(VehState::Crashed)) return;
+
+	/* Do not play any sound when in depot or tunnel */
+	if (v->vehstatus.Test(VehState::Hidden)) return;
+
+	/* Do not play any sound when stopped */
+	if constexpr (Type == VehicleType::Train) {
+		if (front->vehstatus.Test(VehState::Stopped) && front->GetMotion().cur_speed == 0) return;
+	} else {
+		/* front->type == Type here, so the Train arm of the original condition is false. */
+		if (front->vehstatus.Test(VehState::Stopped)) return;
+	}
+
+	/* Update motion counter for animation purposes. One lookup serves both
+	 * this write and the sound check below. */
+	VehicleMotion &motion = v->GetMutableMotion();
+	motion.motion_counter += front->GetMotion().cur_speed;
+
+	/* Check vehicle type specifics */
+	if constexpr (Type == VehicleType::Train) {
+		if (!v->IsEngine()) return;
+	} else if constexpr (Type == VehicleType::Road) {
+		if (!v->IsFrontEngine()) return;
+	} else if constexpr (Type == VehicleType::Aircraft) {
+		if (!v->IsNormalAircraft()) return;
+	}
+
+	/* Play a running sound if the motion counter passes 256 (Do we not skip sounds?) */
+	if (GB(motion.motion_counter, 0, 8) < front->GetMotion().cur_speed) PlayVehicleSound(v, VSE_RUNNING);
+
+	/* Play an alternating running sound every 16 ticks */
+	if (GB(motion.tick_counter, 0, 4) == 0) {
+		/* Play running sound when speed > 0 and not braking */
+		bool running = (front->GetMotion().cur_speed > 0) && !front->vehstatus.Any({VehState::Stopped, VehState::TrainSlowing});
+		PlayVehicleSound(v, running ? VSE_RUNNING_16 : VSE_STOPPED_16);
+	}
+}
+
+#ifdef OTTD_ECS_TICK_VARIANT_B
+
+/**
+ * Scratch buffer for one typed pass. Reused across ticks and passes so the snapshot below
+ * costs no allocation after the first few ticks.
+ */
+static std::vector<VehicleID> _tick_pass_snapshot;
+
+/**
+ * Tick every vehicle of one type, in ascending #VehicleID.
+ *
+ * Phase 6 variant B. The type is a template parameter, so the handler call is direct with
+ * no branch of any kind, and every per-type test in #AgeCargoAndPlaySound folds away.
+ *
+ * **The snapshot is not optional.** A view walks a packed array, and destroying an entity
+ * swap-and-pops the last element into the hole. Since the walk runs backwards, destroying
+ * an element the cursor has *not* reached moves an already-visited element into its slot,
+ * and that vehicle then gets ticked a second time. A train crash destroys several trains
+ * at once, so this is reachable rather than theoretical. Copying the ids out first makes
+ * the walk immune to anything the handlers do to the registry; the cost is one sequential
+ * read of the packed array per pass, which is a rounding error next to the tick bodies.
+ *
+ * Note that only this type's storage matters. Creating a smoke puff during the train pass
+ * touches the effect storage and leaves the train storage alone, which is a property the
+ * one-storage-per-type layout buys and a single tagged storage would not.
+ *
+ * @tparam T The concrete vehicle class.
+ * @tparam Type Its #VehicleType.
+ */
+template <typename T, VehicleType Type>
+static void TickVehiclesOfType()
+{
+	entt::registry &registry = GetVehicleRegistry();
+
+	_tick_pass_snapshot.clear();
+	for (auto [entity, ref] : registry.view<VehicleTypeRef<Type>>().each()) {
+		_tick_pass_snapshot.push_back(ref.id);
+	}
+
+	for (const VehicleID id : _tick_pass_snapshot) {
+		/* GetIfValid checks the type as well as the pool slot, which covers the case of a
+		 * vehicle dying earlier in this pass and its index being reused by another type. */
+		T *v = T::GetIfValid(id);
+		if (v == nullptr) continue;
+
+		if (!v->Tick()) continue;
+
+		if constexpr (Type != VehicleType::Effect && Type != VehicleType::Disaster) {
+			AgeCargoAndPlaySound<T, Type>(v);
+		}
+	}
+}
+
+#endif /* OTTD_ECS_TICK_VARIANT_B */
+
 void CallVehicleTicks()
 {
 	/* Restore canonical iteration order before anything walks the registry. Cheap when
@@ -1116,6 +1241,17 @@ void CallVehicleTicks()
 	PerformanceAccumulator::Reset(PerformanceElement::GameLoopShips);
 	PerformanceAccumulator::Reset(PerformanceElement::GameLoopAircraft);
 
+#ifdef OTTD_ECS_TICK_VARIANT_B
+	/* One pass per type, in VehicleType order. This is the change that breaks continuation
+	 * of a stock savegame: the same vehicles draw from the shared randomiser in a different
+	 * sequence, so the trajectory diverges from tick one. @see docs/ecs-migration-plan.md */
+	TickVehiclesOfType<Train, VehicleType::Train>();
+	TickVehiclesOfType<RoadVehicle, VehicleType::Road>();
+	TickVehiclesOfType<Ship, VehicleType::Ship>();
+	TickVehiclesOfType<Aircraft, VehicleType::Aircraft>();
+	TickVehiclesOfType<EffectVehicle, VehicleType::Effect>();
+	TickVehiclesOfType<DisasterVehicle, VehicleType::Disaster>();
+#else
 	for (Vehicle *v : Vehicle::Iterate()) {
 		[[maybe_unused]] VehicleID vehicle_index = v->index;
 
@@ -1130,69 +1266,13 @@ void CallVehicleTicks()
 		switch (v->type) {
 			default: break;
 
-			case VehicleType::Train:
-			case VehicleType::Road:
-			case VehicleType::Aircraft:
-			case VehicleType::Ship: {
-				Vehicle *front = v->First();
-
-				/* One lookup for three reads. Resolving the accessor per read is what
-				 * cost 74% of the game loop in phase 2. @see ecs_shadow.h */
-				const uint16_t cargo_age_period = v->GetVehicleCache().cached_cargo_age_period;
-				if (cargo_age_period != 0) {
-					v->cargo_age_counter = std::min(v->cargo_age_counter, cargo_age_period);
-					if (--v->cargo_age_counter == 0) {
-						v->cargo.AgeCargo();
-						v->cargo_age_counter = cargo_age_period;
-					}
-				}
-
-				/* Do not play any sound when crashed */
-				if (front->vehstatus.Test(VehState::Crashed)) continue;
-
-				/* Do not play any sound when in depot or tunnel */
-				if (v->vehstatus.Test(VehState::Hidden)) continue;
-
-				/* Do not play any sound when stopped */
-				if (front->vehstatus.Test(VehState::Stopped) && (front->type != VehicleType::Train || front->GetMotion().cur_speed == 0)) continue;
-
-				/* Update motion counter for animation purposes. One lookup serves both
-				 * this write and the sound check below. */
-				VehicleMotion &motion = v->GetMutableMotion();
-				motion.motion_counter += front->GetMotion().cur_speed;
-
-				/* Check vehicle type specifics */
-				switch (v->type) {
-					case VehicleType::Train:
-						if (!Train::From(v)->IsEngine()) continue;
-						break;
-
-					case VehicleType::Road:
-						if (!RoadVehicle::From(v)->IsFrontEngine()) continue;
-						break;
-
-					case VehicleType::Aircraft:
-						if (!Aircraft::From(v)->IsNormalAircraft()) continue;
-						break;
-
-					default:
-						break;
-				}
-
-				/* Play a running sound if the motion counter passes 256 (Do we not skip sounds?) */
-				if (GB(motion.motion_counter, 0, 8) < front->GetMotion().cur_speed) PlayVehicleSound(v, VSE_RUNNING);
-
-				/* Play an alternating running sound every 16 ticks */
-				if (GB(motion.tick_counter, 0, 4) == 0) {
-					/* Play running sound when speed > 0 and not braking */
-					bool running = (front->GetMotion().cur_speed > 0) && !front->vehstatus.Any({VehState::Stopped, VehState::TrainSlowing});
-					PlayVehicleSound(v, running ? VSE_RUNNING_16 : VSE_STOPPED_16);
-				}
-
-				break;
-			}
+			case VehicleType::Train: AgeCargoAndPlaySound<Train, VehicleType::Train>(Train::From(v)); break;
+			case VehicleType::Road: AgeCargoAndPlaySound<RoadVehicle, VehicleType::Road>(RoadVehicle::From(v)); break;
+			case VehicleType::Ship: AgeCargoAndPlaySound<Ship, VehicleType::Ship>(Ship::From(v)); break;
+			case VehicleType::Aircraft: AgeCargoAndPlaySound<Aircraft, VehicleType::Aircraft>(Aircraft::From(v)); break;
 		}
 	}
+#endif /* OTTD_ECS_TICK_VARIANT_B */
 
 	for (auto &it : _vehicles_to_autoreplace) {
 		Vehicle *v = Vehicle::Get(it.first);

@@ -116,12 +116,42 @@ void ResetVehicleRegistrySortStats()
 	_sort_stats = VehicleRegistrySortStats{};
 }
 
+#ifdef OTTD_ECS_TICK_VARIANT_B
+
+/**
+ * Attach the per-type identity component that variant B's typed views select on.
+ *
+ * A switch rather than anything cleverer because #VehicleType is a runtime value here and
+ * the storage is chosen by template parameter. This runs once per vehicle creation, not
+ * per tick, so the branch is not on any hot path.
+ *
+ * @param registry The registry.
+ * @param entity The entity to tag.
+ * @param id The vehicle the entity represents.
+ * @param type Its type.
+ */
+static void EmplaceVehicleTypeRef(entt::registry &registry, entt::entity entity, VehicleID id, VehicleType type)
+{
+	switch (type) {
+		case VehicleType::Train: registry.emplace<VehicleTypeRef<VehicleType::Train>>(entity, id); break;
+		case VehicleType::Road: registry.emplace<VehicleTypeRef<VehicleType::Road>>(entity, id); break;
+		case VehicleType::Ship: registry.emplace<VehicleTypeRef<VehicleType::Ship>>(entity, id); break;
+		case VehicleType::Aircraft: registry.emplace<VehicleTypeRef<VehicleType::Aircraft>>(entity, id); break;
+		case VehicleType::Effect: registry.emplace<VehicleTypeRef<VehicleType::Effect>>(entity, id); break;
+		case VehicleType::Disaster: registry.emplace<VehicleTypeRef<VehicleType::Disaster>>(entity, id); break;
+		default: NOT_REACHED();
+	}
+}
+
+#endif /* OTTD_ECS_TICK_VARIANT_B */
+
 /**
  * Create the entity for a newly constructed vehicle.
  * @param id The vehicle that was constructed.
+ * @param type The type of the vehicle, which decides which typed storage it joins.
  * @return The entity, which the vehicle stores so that component access needs no lookup.
  */
-entt::entity RegisterVehicleEntity(VehicleID id)
+entt::entity RegisterVehicleEntity(VehicleID id, [[maybe_unused]] VehicleType type)
 {
 	VehicleRegistryData &data = Data();
 
@@ -141,6 +171,10 @@ entt::entity RegisterVehicleEntity(VehicleID id)
 	data.registry.emplace<VehicleCacheComponent>(entity);
 	data.registry.emplace<VehicleMotion>(entity);
 	data.registry.emplace<VehiclePosition>(entity);
+
+#ifdef OTTD_ECS_TICK_VARIANT_B
+	EmplaceVehicleTypeRef(data.registry, entity, id, type);
+#endif
 
 	data.entity_by_vehicle_id[index] = entity;
 
@@ -215,6 +249,20 @@ void SortVehicleRegistry()
 	data.registry.sort<VehicleCacheComponent, VehicleRef>();
 	data.registry.sort<VehicleMotion, VehicleRef>();
 	data.registry.sort<VehiclePosition, VehicleRef>();
+
+#ifdef OTTD_ECS_TICK_VARIANT_B
+	/* The typed storages too, which is what makes variant B deterministic rather than
+	 * history dependent: each pass then visits its type in ascending VehicleID. Note this
+	 * is what the plan assumed variant B could not have -- it can, at the price of keeping
+	 * the sort. Dropping these six calls is what "variant B, unsorted" means. */
+	data.registry.sort<VehicleTypeRef<VehicleType::Train>, VehicleRef>();
+	data.registry.sort<VehicleTypeRef<VehicleType::Road>, VehicleRef>();
+	data.registry.sort<VehicleTypeRef<VehicleType::Ship>, VehicleRef>();
+	data.registry.sort<VehicleTypeRef<VehicleType::Aircraft>, VehicleRef>();
+	data.registry.sort<VehicleTypeRef<VehicleType::Effect>, VehicleRef>();
+	data.registry.sort<VehicleTypeRef<VehicleType::Disaster>, VehicleRef>();
+#endif
+
 	const auto all_sorted = std::chrono::steady_clock::now();
 
 	_sort_stats.sorts++;

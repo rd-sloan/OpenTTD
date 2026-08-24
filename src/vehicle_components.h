@@ -62,4 +62,26 @@ struct VehicleCacheComponent {
  * it here and including this header there would be circular. The alternative was moving
  * hot one-line accessors out of line, which costs a call on the movement path. */
 
+/**
+ * A vehicle's pool identity, in a storage private to its type.
+ *
+ * This is what makes a *typed* view possible, and it exists only for phase 6 variant B.
+ * A view can select on a component's type but not on a value, so a single component
+ * holding a #VehicleType would still require a branch per vehicle -- which is variant A,
+ * and variant A measured at nothing. One storage per vehicle type is what actually
+ * removes the branch, because the type then becomes a template parameter and every
+ * per-type test in the tick body folds away at compile time.
+ *
+ * It carries the #VehicleID rather than being an empty tag so that walking the storage is
+ * a straight sequential read of the packed array, with no sparse-set lookup to recover
+ * which vehicle each entity is. That duplicates #VehicleRef, at four bytes per vehicle;
+ * the duplication is the price of the typed walk and is counted as part of variant B.
+ *
+ * @tparam Type The vehicle type whose entities this storage holds.
+ */
+template <VehicleType Type>
+struct VehicleTypeRef {
+	VehicleID id; ///< Pool index of the vehicle this entity represents.
+};
+
 #endif /* VEHICLE_COMPONENTS_H */

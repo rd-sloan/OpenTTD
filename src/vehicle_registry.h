@@ -1,4 +1,4 @@
-/*
+﻿/*
  * This file is part of OpenTTD.
  * OpenTTD is free software; you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, version 2.
  * OpenTTD is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
@@ -13,6 +13,20 @@
 #include "vehicle_type.h"
 
 #include <entt/entity/registry.hpp>
+
+/**
+ * Phase 6 variant selector.
+ *
+ * Undefined: variant A, one pass in ascending #VehicleID with the tick handler reached
+ * through a type switch. Defined: variant B, one typed pass per vehicle type over a
+ * private storage, which changes the interleaving of `Random()` draws and therefore the
+ * trajectory a stock savegame continues on. See docs/ecs-migration-plan.md phase 6.
+ *
+ * A compile-time switch rather than a setting because the two variants are being
+ * compared, not offered: a runtime branch would put the cost of both in each binary, and
+ * a game whose trajectory depends on a setting is worse than one that does not.
+ */
+/* #define OTTD_ECS_TICK_VARIANT_B */
 
 /**
  * The stable pool identity of a vehicle entity.
@@ -129,7 +143,7 @@ bool ValidateVehicleRegistry();
 /* Lifecycle hooks. Called only from Vehicle's constructor and destructor, which
  * between them cover every creation and destruction path including savegame load
  * (Pool::CreateAtIndex forwards to the constructor) and pool cleaning. */
-entt::entity RegisterVehicleEntity(VehicleID id);
+entt::entity RegisterVehicleEntity(VehicleID id, VehicleType type);
 void UnregisterVehicleEntity(VehicleID id);
 
 #endif /* VEHICLE_REGISTRY_H */

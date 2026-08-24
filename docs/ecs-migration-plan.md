@@ -1693,7 +1693,7 @@ motion fields are written per tick, so the first mechanism is genuinely present
 here in a way it was not for `vcache`, but the second still needs an `offsetof`
 check rather than an assumption.
 
-### Phase 6 -- Devirtualising the tick dispatch (DANGER) -- variant A done, variant B outstanding
+### Phase 6 -- Devirtualising the tick dispatch (DANGER) -- done, both variants measured
 
 This is where phase 4 gets paid for. Phase 4 moves the fields and accepts a
 regression; this phase converts the loop to iterate views, so the registry lookup
@@ -1992,13 +1992,136 @@ are the denominator.** A change that touches all four vehicle types has no untou
 vehicle accumulator to compare against, but the non-vehicle elements inside the game loop
 -- `landscape`, `economy` -- serve the same purpose and are what made this readable.
 
-**Exit:** standard criteria for variant A, including the new save-resume check.
-For variant B: save format byte-identical, both variants build and play, the
-save-resume check recorded as failing *by design* with the mechanism explained, a
-fresh fingerprint baseline captured and shown stable across repeat runs, and A/B
-timings on both fixtures with at least five samples each per the revised noise
-rules. The headline deliverable is the A-versus-B gap and an explanation of where it
-comes from.
+#### Variant B, built and measured: it helps the rare types and taxes the common one
+
+Built as one typed pass per vehicle type, selected by `OTTD_ECS_TICK_VARIANT_B`. Each
+entity carries a `VehicleTypeRef<Type>` in a storage private to its type, so a view
+selects a single type with no branch and the vehicle type becomes a template parameter --
+which folds away every per-type test in the tick body, including the `IsEngine` /
+`IsFrontEngine` / `IsNormalAircraft` checks and the train-only arm of the stopped-sound
+condition. The shared tail (cargo ageing, running sounds) was factored into one templated
+function that *both* variants call, so the comparison is not measuring a refactor; the
+Hilbergen numbers below include the committed variant A as a third binary to prove that.
+
+**The snapshot is not optional, and the reason is worth keeping.** A view walks a packed
+array and `destroy` swap-and-pops the last element into the hole. The walk runs backwards,
+so destroying an element the cursor has *not* yet reached moves an already-visited element
+into its slot, and that vehicle is ticked twice. A train crash destroys several trains at
+once, so this is reachable rather than theoretical. Each pass therefore copies its ids out
+first and walks the copy, re-checking each through `GetIfValid`. One-storage-per-type
+limits the damage further: creating a smoke puff during the train pass touches the effect
+storage and leaves the train storage untouched, which a single tagged storage would not do.
+
+**wentbourne, two interleaved pairs.** The per-subsystem split is the whole story:
+
+| Accumulator | Variant A | Variant B | Change |
+| --- | --- | --- | --- |
+| `game_loop` | 234,444 ms | 244,587 ms | **+4.3%** |
+| `trains` (88% of parts) | 119,405 ms | 125,297 ms | **+4.9%** |
+| `road_vehicles` (6.4%) | 58,521 ms | 59,180 ms | +1.1% |
+| `ships` (3.3%) | 7,759 ms | 7,072 ms | **-8.9%** |
+| `aircraft` (1.8%) | 2,665 ms | 2,374 ms | **-10.9%** |
+| `landscape` *(untouched)* | 5,356 ms | 5,281 ms | -1.4% |
+
+**The gain is proportional to how *rare* the type is, and the cost lands on the common
+one.** Aircraft are 1,529 parts scattered through 85,259, so the old pool walk touched one
+every ~56 slots; a typed pass makes them dense and they gain 11%. Trains are 88% of the
+pool, so the walk was already dense in trains and the typed pass buys nothing while still
+paying for the snapshot and the `GetIfValid` re-lookup -- so they lose 5%. Weighted by
+where the time actually is, that is a net 4.3% loss.
+
+Hilbergen agrees and shows the same effect at its extreme: 97% trains, so it is variant B's
+worst case -- all of the overhead, none of the benefit. Five interleaved rounds of three
+binaries, normalised against `landscape`:
+
+| Binary | `game_loop` median | Normalised | `ecs.sort_total_ms` |
+| --- | --- | --- | --- |
+| Variant A, as committed | 9,215 ms | 16.01 | 970 ms |
+| Variant A, shared tail | 9,270 ms | 16.13 | 962 ms |
+| **Variant B** | **9,672 ms** | **16.62** | **1,046 ms** |
+
+The two variant A binaries agree to within noise and produce the identical fingerprint, so
+the shared-tail refactor is neutral and the B comparison is clean. About a fifth of B's
+Hilbergen loss is the six extra typed `sort_as` calls -- 962 ms of sorting becomes 1,046.
+
+**So the phase's headline number is negative: typed passes cost 4.3% on the stress fixture
+and 4.3% on the precision one.** Determinism is not what is standing between this codebase
+and a faster tick loop. What variant B actually demonstrates is that the win is available
+only for vehicle types that are a small fraction of the pool, and paid for by the type that
+is most of it.
+
+That suggests the interesting variant is one neither A nor B describes: **typed passes for
+the rare types only, and the existing single pass for whatever dominates.** That is not a
+recommendation -- it would still change `Random()` interleaving and so carries variant B's
+compatibility break for a fraction of variant B's already-negative gain -- but it is where
+the measurements point, and it is worth stating so nobody re-derives it later.
+
+#### Variant B is deterministic after all, and the plan was wrong about why
+
+The plan above argues that variant B "is not self-consistent" because packed order is a
+function of create/destroy history, so a resumed game would iterate differently from the
+run that saved it. **That is true only if the sort is dropped.** Variant B as built keeps
+`SortVehicleRegistry()` and sorts the typed storages along with everything else, so each
+pass visits its type in ascending `VehicleID` -- an order that is a pure function of the
+live set, exactly like `PoolIterator`.
+
+The evidence is direct: variant B produced `AB556BAEFF70ABE4` on five consecutive Hilbergen
+runs and `18AA2463FDF40C94` on both wentbourne runs. Stable, reproducible, and different
+from variant A -- which is precisely the intended shape. Variant B breaks *continuation of
+a stock savegame*, because the same vehicles draw from the shared randomiser in a different
+sequence. It does not break save-resume equivalence.
+
+So the correct statement is that there are two variant Bs, and the plan conflated them:
+
+- **B-sorted**, built here. Deterministic, save-resume safe, and multiplayer-safe among
+  peers running the same build. Diverges from stock OpenTTD's trajectory only.
+- **B-unsorted**, not built. Drops the sort -- recovering the 10.4% Hilbergen sort tax
+  measured in 6.1 -- and takes on the history dependence the plan describes. This is the
+  only version that is genuinely not self-consistent.
+
+B-unsorted is the one worth measuring next if anyone wants the real ceiling, because it is
+the only configuration in this whole phase that removes a cost rather than adding one.
+
+Two supporting checks, both passed:
+
+- **Save format is unaffected.** An exit save written by variant B loads and runs in a
+  variant A binary, with the same 2,820 vehicle parts. Nothing about the typed storages is
+  serialised -- `VehicleTypeRef` is derived from `Vehicle::type` at construction.
+- **Both configurations build, and both pass 102 of 102 tests.**
+
+That second result deserves its own line, because it is a gap rather than a reassurance.
+**The regression suite does not notice variant B at all.** A change that alters the
+trajectory of every savegame in existence passes `regression`, `stationlist`, `gs` and
+`gs_compat` without a murmur. The plan already noted that the determinism check cannot see
+this; the suite cannot either. **The fingerprint is the only thing in this project that
+catches it**, which is a strong argument for keeping it and a caution against reading a
+green test run as evidence that behaviour is unchanged.
+
+#### The A/B comparison is between two different games
+
+Stated plainly because it bounds how hard the per-subsystem numbers above can be pushed.
+Variant B diverges from variant A at tick one, so after 5,000 ticks the two runs are
+simulating different worlds: different routes taken, different depot occupancy, different
+pathfinder work. The comparison is therefore not strictly like for like.
+
+The workload counts are reassuringly close -- both wentbourne runs end with exactly 85,259
+vehicle parts, both Hilbergen runs with 2,820 -- so the magnitude of work is the same and
+the divergence is in its detail. The large, consistent effects survive that caveat:
+aircraft at -11% and trains at +5% reproduced across both pairs. The 1.1% on road vehicles
+does not, and should not be quoted.
+
+This is unavoidable rather than a flaw in the method. Any change that reorders the
+simulation cannot be A/B'd against an identical trajectory, because there is no identical
+trajectory to be had. It is the one measurement in this project where the fingerprint gate
+and the timing comparison are mutually exclusive.
+
+**Exit:** met for both variants, against the descoped criteria. Variant A: standard
+criteria, fingerprints unchanged on both fixtures, 102 of 102 tests, the 3,000-tick Debug
+gate at `3C94DD1E5614C300`. Variant B: save format verified by cross-loading into a variant
+A binary, both configurations build and play, fresh fingerprints captured and shown stable
+across five and two runs respectively, and A/B timings on both fixtures. The save-resume
+check was dropped -- see the descoping note above -- and in the event it would have passed
+for B-sorted rather than failed, which is the outcome the plan did not anticipate.
 
 ### Phase 7 -- Economy and cargo (DANGER)
 
