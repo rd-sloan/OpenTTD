@@ -1,0 +1,571 @@
+<title>OpenTTD ECS Scorecard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap">
+
+<style>
+:root {
+  --ground: #E7E9ED;
+  --panel: #F6F7F9;
+  --panel-sunk: #DEE1E7;
+  --ink: #16191F;
+  --ink-soft: #545C6B;
+  --ink-faint: #7D8695;
+  --rule: #C4CAD3;
+  --rule-soft: #D6DAE1;
+  --accent: #1D4E6B;
+  --accent-soft: #E0E8EE;
+  --clear: #2E7D4F;
+  --caution: #A96D14;
+  --danger: #A8352A;
+  --clear-bg: #E2EDE6;
+  --caution-bg: #F2E9D8;
+  --danger-bg: #F2E1DE;
+  --shadow: 0 1px 2px rgba(22, 25, 31, .06), 0 6px 18px -12px rgba(22, 25, 31, .18);
+
+  --step--1: clamp(.78rem, .76rem + .1vw, .84rem);
+  --step-0: clamp(1rem, .97rem + .16vw, 1.09rem);
+  --step-1: clamp(1.18rem, 1.1rem + .35vw, 1.36rem);
+  --step-2: clamp(1.5rem, 1.32rem + .8vw, 2rem);
+  --step-3: clamp(2.1rem, 1.7rem + 1.8vw, 3.2rem);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #14171C;
+    --panel: #1C2027;
+    --panel-sunk: #0F1216;
+    --ink: #E5E8ED;
+    --ink-soft: #A0A8B6;
+    --ink-faint: #737C8B;
+    --rule: #2E343E;
+    --rule-soft: #242A32;
+    --accent: #7FB3CC;
+    --accent-soft: #1E2A33;
+    --clear: #6FBF8E;
+    --caution: #D9A94E;
+    --danger: #DF8479;
+    --clear-bg: #1A2620;
+    --caution-bg: #26200F;
+    --danger-bg: #291917;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 6px 20px -12px rgba(0, 0, 0, .6);
+  }
+}
+
+:root[data-theme="dark"] {
+  --ground: #14171C;
+  --panel: #1C2027;
+  --panel-sunk: #0F1216;
+  --ink: #E5E8ED;
+  --ink-soft: #A0A8B6;
+  --ink-faint: #737C8B;
+  --rule: #2E343E;
+  --rule-soft: #242A32;
+  --accent: #7FB3CC;
+  --accent-soft: #1E2A33;
+  --clear: #6FBF8E;
+  --caution: #D9A94E;
+  --danger: #DF8479;
+  --clear-bg: #1A2620;
+  --caution-bg: #26200F;
+  --danger-bg: #291917;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 6px 20px -12px rgba(0, 0, 0, .6);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: "Source Serif 4", Georgia, "Times New Roman", serif;
+  font-size: var(--step-0);
+  line-height: 1.62;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap {
+  max-width: 52rem;
+  margin: 0 auto;
+  padding: clamp(1.5rem, 4vw, 4rem) clamp(1.1rem, 4vw, 3rem) 5rem;
+}
+
+.prose { max-width: 38rem; }
+
+h1, h2, h3, .eyebrow, th, .lede-fig b, .col-label, .val, .tag {
+  font-family: "Barlow Condensed", "Arial Narrow", Arial, sans-serif;
+}
+
+h1 {
+  font-size: var(--step-3);
+  font-weight: 700;
+  line-height: .98;
+  letter-spacing: -.005em;
+  margin: 0 0 .5rem;
+  text-wrap: balance;
+}
+
+h2 {
+  font-size: var(--step-2);
+  font-weight: 600;
+  line-height: 1.06;
+  margin: 0 0 .9rem;
+  text-wrap: balance;
+}
+
+h3 {
+  font-size: var(--step-1);
+  font-weight: 600;
+  line-height: 1.15;
+  margin: 0 0 .4rem;
+  text-wrap: balance;
+}
+
+p { margin: 0 0 1.05em; }
+.prose > :last-child, .panel > :last-child { margin-bottom: 0; }
+
+a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+
+.eyebrow {
+  font-size: var(--step--1);
+  font-weight: 600;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin: 0 0 .7rem;
+}
+
+code {
+  font-family: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+  font-size: .86em;
+  background: var(--panel-sunk);
+  padding: .1em .34em;
+  border-radius: 2px;
+  overflow-wrap: break-word;
+}
+
+header.masthead {
+  border-bottom: 2px solid var(--ink);
+  padding-bottom: 1.4rem;
+  margin-bottom: 2.4rem;
+}
+
+.standfirst {
+  font-size: var(--step-1);
+  color: var(--ink-soft);
+  max-width: 34rem;
+  margin: .8rem 0 0;
+  text-wrap: pretty;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .4rem 1.6rem;
+  margin-top: 1.4rem;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: var(--step--1);
+  color: var(--ink-faint);
+}
+.meta strong { color: var(--ink-soft); font-weight: 500; }
+
+section { margin-bottom: 3.2rem; }
+
+/* --- headline figures --- */
+.lede-figs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  gap: 1px;
+  background: var(--rule);
+  border: 1px solid var(--rule);
+  margin: 1.6rem 0 0;
+}
+.lede-fig {
+  background: var(--panel);
+  padding: .95rem 1rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: .2rem;
+}
+.lede-fig b {
+  font-size: var(--step-2);
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+.lede-fig b.up { color: var(--danger); }
+.lede-fig b.flat { color: var(--ink-faint); }
+.lede-fig span { font-size: var(--step--1); color: var(--ink-soft); line-height: 1.35; }
+
+/* --- trajectory chart --- */
+.chart { margin: 0 0 1.4rem; }
+.chart figcaption {
+  font-size: var(--step--1);
+  color: var(--ink-soft);
+  margin-bottom: 1.1rem;
+  max-width: 38rem;
+}
+.plot-scroll { overflow-x: auto; padding-bottom: .2rem; }
+.plot {
+  min-width: 44rem;
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  background: var(--panel);
+  /* Right gutter holds the datum label, so it can never collide with a bar. */
+  padding: 2rem 6.5rem 0 1.1rem;
+}
+.cols {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(9, 1fr);
+  gap: 2px;
+  align-items: end;
+  height: 15rem;
+}
+/* Anchored to .cols, whose bottom edge is the zero line and whose height is the
+   same 100% the bars are a percentage of. */
+.datum {
+  position: absolute;
+  left: 0;
+  right: -6.5rem;
+  bottom: 50.6%;
+  border-top: 1px dashed var(--accent);
+  pointer-events: none;
+}
+.datum span {
+  position: absolute;
+  right: .55rem;
+  top: 50%;
+  transform: translateY(-50%);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: .7rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
+  text-align: right;
+  color: var(--accent);
+}
+.datum span b { display: block; font-weight: 500; }
+.col {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  height: 100%;
+  position: relative;
+}
+.val {
+  font-size: var(--step--1);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  color: var(--ink-faint);
+  margin-bottom: .3rem;
+}
+.col[data-emph] .val { color: var(--ink); }
+.bar {
+  background: var(--accent);
+  border-radius: 3px 3px 0 0;
+  min-height: 3px;
+  flex: none;
+}
+.col[data-branch] .bar {
+  background: transparent;
+  border: 1.5px dashed var(--accent);
+  border-bottom: 0;
+}
+.col-labels {
+  display: grid;
+  grid-template-columns: repeat(9, 1fr);
+  gap: 2px;
+  border-top: 1px solid var(--rule);
+  margin-right: -6.5rem;
+  padding: .5rem 6.5rem 1rem 0;
+}
+.col-label {
+  font-size: .7rem;
+  line-height: 1.2;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  text-align: center;
+  padding: 0 .1rem;
+}
+.col-label b { display: block; color: var(--ink-soft); font-weight: 600; }
+.chart-note {
+  font-size: var(--step--1);
+  color: var(--ink-faint);
+  margin: .7rem 0 0;
+  max-width: 38rem;
+}
+
+/* --- tables --- */
+.table-scroll { overflow-x: auto; margin-bottom: 1.05em; }
+table { border-collapse: collapse; width: 100%; min-width: 32rem; font-size: var(--step--1); }
+th {
+  text-align: left;
+  font-weight: 600;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  border-bottom: 1.5px solid var(--rule);
+  padding: 0 .9rem .45rem 0;
+  white-space: nowrap;
+}
+td {
+  border-bottom: 1px solid var(--rule-soft);
+  padding: .55rem .9rem .55rem 0;
+  vertical-align: top;
+  color: var(--ink-soft);
+}
+td:first-child { color: var(--ink); }
+td.num {
+  font-family: "IBM Plex Mono", monospace;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--ink);
+}
+td.up { color: var(--danger); }
+td.down { color: var(--clear); }
+
+.tag {
+  font-size: .68rem;
+  font-weight: 600;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  padding: .1rem .4rem;
+  border-radius: 2px;
+  white-space: nowrap;
+  color: var(--caution);
+  background: var(--caution-bg);
+}
+
+/* --- findings --- */
+.findings { display: flex; flex-direction: column; gap: 0; }
+.finding {
+  display: grid;
+  grid-template-columns: 4.5rem 1fr;
+  gap: 0 1.2rem;
+  padding: 1.15rem 0;
+  border-top: 1px solid var(--rule);
+}
+.findings .finding:last-child { border-bottom: 1px solid var(--rule); }
+.finding-verdict {
+  font-family: "Barlow Condensed", sans-serif;
+  font-size: var(--step-1);
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  padding-top: .1rem;
+  text-align: right;
+}
+.finding-verdict.zero { color: var(--ink-faint); }
+.finding-verdict.bad { color: var(--danger); }
+.finding-verdict.good { color: var(--clear); }
+.finding h3 { margin-bottom: .3rem; }
+.finding p { margin: 0; max-width: 36rem; font-size: calc(var(--step-0) * .96); }
+.finding p + p { margin-top: .6em; }
+
+.callout {
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+  padding: 1rem 1.15rem;
+  margin: 0 0 1.05em;
+}
+.callout p { max-width: 36rem; }
+.callout > :last-child { margin-bottom: 0; }
+.callout .eyebrow { color: var(--accent); margin-bottom: .4rem; }
+
+ul { margin: 0 0 1.05em; padding-left: 1.2rem; max-width: 38rem; }
+li { margin-bottom: .45rem; }
+li::marker { color: var(--ink-faint); }
+
+.verdict-panel {
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-top: 3px solid var(--ink);
+  padding: clamp(1.1rem, 2.5vw, 1.7rem);
+  box-shadow: var(--shadow);
+}
+.verdict-panel h3 { margin-bottom: .5rem; }
+.verdict-panel .lede {
+  font-size: var(--step-1);
+  color: var(--ink);
+  margin-bottom: 1em;
+  max-width: 34rem;
+  text-wrap: pretty;
+}
+
+footer {
+  margin-top: 3.5rem;
+  padding-top: 1.2rem;
+  border-top: 1px solid var(--rule);
+  font-size: var(--step--1);
+  color: var(--ink-faint);
+  max-width: 38rem;
+}
+
+@media (max-width: 34rem) {
+  .finding { grid-template-columns: 1fr; gap: .3rem; }
+  .finding-verdict { text-align: left; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+</style>
+
+<div class="wrap">
+
+<header class="masthead">
+  <p class="eyebrow">Private fork &middot; summary</p>
+  <h1>What the ECS migration actually cost</h1>
+  <p class="standfirst">Seven phases of moving OpenTTD's hottest data into an EnTT registry, measured at every step &mdash; and what the numbers say about going further.</p>
+  <div class="meta">
+    <span><strong>Scope</strong> phases 0&ndash;6, complete</span>
+    <span><strong>Fixtures</strong> 2 savegames, 2 build trees</span>
+    <span><strong>Full detail</strong> <a href="https://claude.ai/code/artifact/2b219deb-0bea-44ec-89ae-c150dd50fc8c">the migration plan</a></span>
+  </div>
+</header>
+
+<section>
+  <h2>The short version</h2>
+  <p class="prose">The registry works, the game is correct at every step, and the savegame format never moved. But the performance thesis did not survive contact with measurement. The tick loop is <strong>slower than when we started</strong>, the structural win is eight bytes, and the phase specifically designed to pay back the earlier cost paid back nothing.</p>
+  <div class="lede-figs">
+    <div class="lede-fig"><b class="up">+42%</b><span>Game loop, small fixture, against the phase&nbsp;0 baseline</span></div>
+    <div class="lede-fig"><b class="up">+20%</b><span>Game loop, large fixture</span></div>
+    <div class="lede-fig"><b>&minus;8 B</b><span>Off <code>sizeof(Vehicle)</code>, from 544</span></div>
+    <div class="lede-fig"><b class="flat">0%</b><span>From devirtualising the tick dispatch</span></div>
+  </div>
+</section>
+
+<section>
+  <h2>The trajectory</h2>
+  <figure class="chart">
+    <figcaption>Game loop time over 20,000 ticks of the small fixture, at each landmark in the migration. The dashed line is the pre-migration baseline &mdash; the level the work has been trying to get back to since phase&nbsp;4.</figcaption>
+    <div class="plot-scroll">
+      <div class="plot">
+        <div class="cols">
+          <div class="datum"><span><b>6,580 ms</b>baseline</span></div>
+          <div class="col"><div class="val">&mdash;</div><div class="bar" style="height:50.6%"></div></div>
+          <div class="col"><div class="val">+2%</div><div class="bar" style="height:51.8%"></div></div>
+          <div class="col" data-emph><div class="val">+90%</div><div class="bar" style="height:96.4%"></div></div>
+          <div class="col"><div class="val">+54%</div><div class="bar" style="height:78.0%"></div></div>
+          <div class="col"><div class="val">+37%</div><div class="bar" style="height:69.4%"></div></div>
+          <div class="col"><div class="val">+40%</div><div class="bar" style="height:71.1%"></div></div>
+          <div class="col" data-emph><div class="val">+42%</div><div class="bar" style="height:71.7%"></div></div>
+          <div class="col" data-branch><div class="val">+48%</div><div class="bar" style="height:74.9%"></div></div>
+          <div class="col" data-emph data-branch><div class="val">+29%</div><div class="bar" style="height:65.3%"></div></div>
+        </div>
+        <div class="col-labels">
+          <div class="col-label"><b>Phase 0</b>baseline</div>
+          <div class="col-label"><b>Phase 3</b>first component</div>
+          <div class="col-label"><b>Phase 4</b>nine fields moved</div>
+          <div class="col-label"><b>Repair</b>inlined lookups</div>
+          <div class="col-label"><b>Repair</b>hoisting</div>
+          <div class="col-label"><b>Phase 6</b>sorted storage</div>
+          <div class="col-label"><b>Variant A</b>devirtualised</div>
+          <div class="col-label"><b>Variant B</b>typed passes</div>
+          <div class="col-label"><b>Variant C</b>no sort</div>
+        </div>
+      </div>
+    </div>
+    <p class="chart-note">Solid bars are states the codebase actually passed through. Dashed bars are measurement branches that were built to be compared and then set aside &mdash; both change the game's trajectory, and variant C also gives up a determinism guarantee the project cannot ship without.</p>
+  </figure>
+
+  <div class="table-scroll">
+    <table>
+      <thead>
+        <tr><th>Landmark</th><th>What changed</th><th>Small fixture</th><th>vs baseline</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Phase 0</td><td>Baseline, no EnTT in the game</td><td class="num">6,580 ms</td><td class="num">&mdash;</td></tr>
+        <tr><td>Phase 3</td><td>First component behind an accessor</td><td class="num">6,740 ms</td><td class="num up">+2%</td></tr>
+        <tr><td>Phase 4</td><td>All nine motion fields moved, mechanically</td><td class="num">12,529 ms</td><td class="num up">+90%</td></tr>
+        <tr><td>Repair 1</td><td>Two header changes made lookups inlinable</td><td class="num">10,136 ms</td><td class="num up">+54%</td></tr>
+        <tr><td>Repair 2</td><td>Accessor hoisting in the hot paths</td><td class="num">9,017 ms</td><td class="num up">+37%</td></tr>
+        <tr><td>Phase 6.1</td><td>Component storages kept sorted</td><td class="num">9,239 ms</td><td class="num up">+40%</td></tr>
+        <tr><td>Variant A</td><td>Virtual dispatch replaced by a type switch</td><td class="num">9,317 ms</td><td class="num up">+42%</td></tr>
+        <tr><td>Variant B <span class="tag">branch</span></td><td>One typed pass per vehicle type</td><td class="num">9,737 ms</td><td class="num up">+48%</td></tr>
+        <tr><td>Variant C <span class="tag">branch</span></td><td>Typed passes, ordering guarantee dropped</td><td class="num">8,485 ms</td><td class="num up">+29%</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="prose">The large fixture tells the same story more mildly &mdash; 195,001 ms at baseline against 234,444 ms now, or +20% &mdash; because it spends proportionally more of its time in work the migration never touched.</p>
+</section>
+
+<section>
+  <h2>Phase 6 was the test, and it is the answer</h2>
+  <p class="prose">Everything before phase 6 was investment: moving fields out of <code>Vehicle</code> and accepting a regression on the promise that a packed, devirtualised tick loop would pay it back. Phase 6 built that loop three different ways and measured each against the others, interleaved run for run. This is the whole case for the architecture, tested directly.</p>
+  <div class="findings">
+    <div class="finding">
+      <div class="finding-verdict zero">0%</div>
+      <div>
+        <h3>Devirtualising the dispatch</h3>
+        <p>Replacing the virtual call with a switch on a type tag changed nothing measurable on either fixture. The disassembly says why, and it invalidates the premise: <strong>a switch on a type tag is itself an indirect branch.</strong> The indirection was relocated, not removed &mdash; and against a tick body costing roughly 550&nbsp;ns per vehicle, neither form is visible.</p>
+      </div>
+    </div>
+    <div class="finding">
+      <div class="finding-verdict bad">&minus;4%</div>
+      <div>
+        <h3>Typed passes over packed storage</h3>
+        <p>The gain turned out to be proportional to how <em>rare</em> a vehicle type is, and the cost lands on the common one. Aircraft &mdash; 1,529 parts scattered through 85,259 &mdash; gained 11%. Trains, at 88% of the pool, lost 5%, because the old loop was already dense in trains and the typed pass buys nothing there.</p>
+        <p>Weighted by where the time actually is, that is a net loss.</p>
+      </div>
+    </div>
+    <div class="finding">
+      <div class="finding-verdict good">+9%</div>
+      <div>
+        <h3>Abandoning canonical iteration order</h3>
+        <p>The one configuration that improved anything. Keeping the registry sorted &mdash; which is what preserves deterministic simulation &mdash; costs <strong>10.4%</strong> of the game loop on the small fixture and <strong>0.14%</strong> on the large one. Dropping it recovers exactly that, so the win is 9% on one fixture and nothing on the other.</p>
+        <p>It is also unshippable: it breaks the guarantee that a resumed savegame continues identically, which is what makes multiplayer joins work.</p>
+      </div>
+    </div>
+  </div>
+  <div class="callout" style="margin-top:1.6rem">
+    <p class="eyebrow">And the checks would not have told us</p>
+    <p>The unshippable variant reproduced its own fingerprint perfectly across five runs, passed all 102 tests, and cross-loaded its savegames cleanly. Every check the project has says it is fine. It is fine only because every run starts from a fresh load; the thing it breaks is invisible to all of them.</p>
+  </div>
+</section>
+
+<section>
+  <h2>Why it did not work</h2>
+  <p class="prose">Four reasons, in rough order of how much they matter. None of them is a criticism of EnTT, which did everything it claims to do.</p>
+  <ul class="prose">
+    <li><strong>The work per vehicle dwarfs the layout.</strong> A vehicle tick costs around 550&nbsp;ns: pathfinder entry, chain walking, NewGRF callbacks, order processing. A cache miss is on the order of 100&nbsp;ns. Memory layout is one term in that sum and never was the dominant one.</li>
+    <li><strong>OpenTTD had already built the good half of an ECS.</strong> Its object pool is a slotmap &mdash; stable integer handles, O(1) lookup, dense iteration in ascending index order. The locality an ECS promises was largely already there, so the registry added a sparse-set indirection <em>on top of</em> an already-dense structure. There was far less headroom than the design assumed.</li>
+    <li><strong>Determinism imposes a tax with no counterpart in the old design.</strong> Canonical iteration order is free in a slotmap and costs an <code>O(n&nbsp;log&nbsp;n)</code> sort in a registry &mdash; up to 10.4% of the game loop. That is a cost the ECS introduces and the pool never paid.</li>
+    <li><strong>The constant factor looked exactly like an architectural cost.</strong> The +90% spike was mostly three non-inlinable calls per field access, and two header changes removed most of it. In a profile, "this abstraction is inherently expensive" and "the compiler cannot see through this" are indistinguishable, and they have completely different fixes.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Should the refactor continue?</h2>
+  <div class="verdict-panel">
+    <p class="lede">Not in its current form. The strategy of relocating <em>hot</em> data into components has now been measured end to end, and it loses.</p>
+    <p>That verdict is specific, not general. What failed is a particular bet: that packed iteration and devirtualised dispatch would beat a well-built slotmap on a workload whose per-item cost is dominated by branching logic rather than by memory access. Phase 6 tested that bet three ways and it lost three times. Continuing to move hot fields would be spending effort against a hypothesis that has already been falsified on this codebase.</p>
+    <h3>What is still worth doing</h3>
+    <p>Two things, and neither is more of the same:</p>
+    <ul>
+      <li><strong>Fix the sort rather than delete it.</strong> The registry currently redoes a full <code>O(n&nbsp;log&nbsp;n)</code> sort every time a single smoke puff is created. Updating it incrementally instead would target the same 10.4% while keeping the determinism guarantee intact. On the evidence, that one change is worth more than everything phase 6 attempted.</li>
+      <li><strong>Target optional data, not hot data.</strong> Every vehicle part carries 88 bytes of consist data that is only meaningful on the 16% of parts that lead a consist &mdash; roughly 6&nbsp;MB of dead weight on the large fixture. Data that only <em>some</em> entities need is the case where component storage genuinely earns its keep, and the win there is memory footprint rather than iteration speed.</li>
+    </ul>
+    <p>Worth being honest about the second one: a side table keyed by vehicle ID would deliver that win too, without a registry. The remaining case for EnTT is ergonomic rather than architectural, which is a much smaller claim than the one this migration set out to prove.</p>
+  </div>
+</section>
+
+<section>
+  <h2>What was worth the trouble anyway</h2>
+  <p class="prose">The measurement discipline outlived the hypothesis, and it is the transferable part.</p>
+  <p class="prose">Every confident structural claim in this project lost to measurement, and every cheap measurement beat a confident argument. The virtual call was a textbook optimisation target worth nothing. The packed walk was the entire thesis and cost 4%. The sort was assumed to amortise away and costs 10% on one savegame and 0.14% on another &mdash; the small one being the expensive one, which no amount of reasoning about <code>O(n&nbsp;log&nbsp;n)</code> would have predicted. Swapping in an insertion sort was obviously correct and was 17&times; wrong on the other fixture.</p>
+  <p class="prose">In every case the code reading was reasonable and the answer was somewhere else: in a constant factor, a branch predictor, or a property of the savegame rather than of the program. A hostile real-world codebase &mdash; with a shared RNG, a frozen wire format, a twenty-year save compatibility guarantee and a thousand raw pointers &mdash; teaches that far better than a greenfield project can. The constraints were the curriculum.</p>
+</section>
+
+<footer>
+  <p>All figures measured with <code>benchmark/run-benchmark.ps1</code> on two savegames and two build trees, comparing interleaved runs and reading each result against untouched subsystems to cancel machine drift. Percentages are against the phase&nbsp;0 baseline on the same fixture and build configuration.</p>
+  <p>The full phase-by-phase record, including the corrections and the measurements that produced them, is in <a href="https://claude.ai/code/artifact/2b219deb-0bea-44ec-89ae-c150dd50fc8c">the migration plan</a> and in <code>docs/ecs-migration-plan.md</code>.</p>
+  <p>Scoped for a private fork. OpenTTD's <code>CONTRIBUTING.md</code> declines AI-generated contributions upstream, and nothing here is intended for the main repository.</p>
+</footer>
+
+</div>
