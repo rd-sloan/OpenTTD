@@ -1693,7 +1693,7 @@ motion fields are written per tick, so the first mechanism is genuinely present
 here in a way it was not for `vcache`, but the second still needs an `offsetof`
 check rather than an assumption.
 
-### Phase 6 -- Devirtualising the tick dispatch (DANGER) -- sort cost measured, not started
+### Phase 6 -- Devirtualising the tick dispatch (DANGER) -- variant A done, variant B outstanding
 
 This is where phase 4 gets paid for. Phase 4 moves the fields and accepts a
 regression; this phase converts the loop to iterate views, so the registry lookup
@@ -1911,6 +1911,86 @@ exercises one.
 The transferable part is the shape of the result: **the optimisation that is obviously
 right for the fixture you are iterating on can be catastrophic on the one you are not.**
 Both numbers came from the same one-word change, twenty minutes apart.
+
+#### Variant A, built and measured: no detectable change at all
+
+Built as specified. `CallVehicleTicks` no longer calls `v->Tick()`; it calls a static
+`TickVehicle(v)` that switches on `v->type` and calls the handler on the concrete class.
+Every vehicle class is `final`, so naming the type makes the target statically known.
+Iteration order is untouched -- this changes only how the handler is reached.
+
+**The change is real, and it was checked in the disassembly rather than assumed.** In the
+control the dispatch is `call qword ptr [rax+70h]`, the vtable slot. In variant A it is a
+direct `call TickVehicle`, and inside that a jump table with six direct tail-jumps:
+
+```
+TickVehicle:
+  movzx  eax,byte ptr [rcx+5Ch]      ; v->type
+  cmp    eax,5
+  ja     <NOT_REACHED>
+  mov    edx,dword ptr [r8+rax*4+...]
+  jmp    rdx                          ; <-- jump table
+  ...
+  jmp    ?Tick@Train@@UEAA_NXZ        ; <-- direct
+  jmp    ?Tick@RoadVehicle@@UEAA_NXZ
+```
+
+Five interleaved pairs on Hilbergen at 20,000 ticks, alternating the two binaries run for
+run, plus two pairs on wentbourne at 5,000. Fingerprints identical on every one of the
+fourteen runs (`015ED3D109C5CCCC`, `29B52DBB6E7D2558`), 102 of 102 tests, and the
+3,000-tick Debug gate at `3C94DD1E5614C300`.
+
+| Fixture | | Control | Variant A |
+| --- | --- | --- | --- |
+| Hilbergen | `game_loop` minimum | 9,010 ms | 9,221 ms |
+| | `game_loop` median | 9,245 ms | 9,247 ms |
+| | normalised to `landscape` | 16.12 | 16.12 |
+| wentbourne | `game_loop` minimum | 237,695 ms | 233,668 ms |
+| | normalised to `landscape` | 43.95 | 43.86 |
+
+**Nothing. Devirtualising the tick dispatch is worth zero on both fixtures**, and the
+normalised figures agree to three significant figures on Hilbergen and to 0.2% on
+wentbourne.
+
+The disassembly explains why, and the explanation invalidates the premise this variant
+was specified on. **A switch on a type tag is itself an indirect branch.** The control
+pays two dependent loads and one indirect call; variant A pays one direct call, one
+indirect jump through the table, and one direct tail-jump. The indirection was not
+removed, it was relocated. Against handler bodies costing ~550 ns per vehicle-tick on
+wentbourne, the difference between those two sequences is unmeasurable -- and the vtable
+target is well predicted anyway, since vehicles of one type come in long runs of
+consecutive `VehicleID`.
+
+So the plan's "smaller win" for variant A is not smaller, it is absent. **Only variant B
+hoists the branch out of the loop entirely**, which is now the only mechanism in this
+phase with a reason to show anything, and it is exactly the one that costs determinism.
+
+Two further consequences worth stating plainly:
+
+- **Variant A's other half also showed nothing.** Its locality argument rests on the
+  component storages being sorted, which phase 6.1 put in place. Neither that nor this
+  produced a measurable gain, so variant A in total is a no-op that costs 10.4% of the
+  Hilbergen game loop to maintain the sort.
+- **The A-versus-B gap is now a B-versus-status-quo gap.** That is a cleaner question than
+  the one the phase set out to ask, but it does mean the "price tag on determinism" framing
+  needs restating: the price is not A's shortfall against B, it is everything B gains,
+  because A gains nothing.
+
+#### The drift control caught a false positive
+
+Worth recording as method, since a minima-only reading would have published a wrong number.
+
+The control's fastest Hilbergen run came in at 9,010 ms against variant A's 9,221 ms --
+a clean-looking 2.3% regression, and exactly the sort of figure that gets written down.
+But that same run also had the fastest `landscape` (555.9 ms against 573-582 elsewhere)
+and the fastest `economy` (155.7 ms against 161-166), both of which are byte-identical
+code in the two binaries. The run was fast because the machine was fast.
+
+Normalising each run's `game_loop` against its own `landscape` removes that entirely and
+gives 16.12 against 16.12. **The untouched accumulators are not just a sanity check, they
+are the denominator.** A change that touches all four vehicle types has no untouched
+vehicle accumulator to compare against, but the non-vehicle elements inside the game loop
+-- `landscape`, `economy` -- serve the same purpose and are what made this readable.
 
 **Exit:** standard criteria for variant A, including the new save-resume check.
 For variant B: save format byte-identical, both variants build and play, the

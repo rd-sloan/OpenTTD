@@ -43,6 +43,7 @@
 #include "sound_func.h"
 #include "effectvehicle_func.h"
 #include "effectvehicle_base.h"
+#include "disaster_vehicle.h"
 #include "ecs_shadow.h"
 #include "vehicle_components.h"
 #include "vehicle_registry.h"
@@ -1062,6 +1063,38 @@ static void RunEconomyVehicleDayProc()
 	}
 }
 
+/**
+ * Run one vehicle's tick handler, dispatching on its type tag rather than through the
+ * vtable.
+ *
+ * Phase 6 variant A. Every concrete vehicle class is `final`, so naming the type in the
+ * call makes the target statically known: the compiler emits a direct call, and the
+ * indirect load-vptr-load-slot-call chain disappears. The switch itself is a jump table,
+ * so this trades two dependent loads for one predictable indirect branch.
+ *
+ * The order of iteration is unchanged -- this only replaces how the handler is reached,
+ * not which vehicle is reached when -- so the fingerprint gate applies in full.
+ *
+ * Vehicle::Tick() remains virtual. Nothing else calls it, but leaving it virtual means a
+ * caller holding a Vehicle* still gets correct behaviour, whereas hiding the base with
+ * non-virtual overrides would silently return true for every type.
+ *
+ * @param v The vehicle to tick.
+ * @return False if the vehicle deleted itself, in which case it must not be touched again.
+ */
+static bool TickVehicle(Vehicle *v)
+{
+	switch (v->type) {
+		case VehicleType::Train: return Train::From(v)->Tick();
+		case VehicleType::Road: return RoadVehicle::From(v)->Tick();
+		case VehicleType::Ship: return Ship::From(v)->Tick();
+		case VehicleType::Aircraft: return Aircraft::From(v)->Tick();
+		case VehicleType::Effect: return EffectVehicle::From(v)->Tick();
+		case VehicleType::Disaster: return DisasterVehicle::From(v)->Tick();
+		default: NOT_REACHED();
+	}
+}
+
 void CallVehicleTicks()
 {
 	/* Restore canonical iteration order before anything walks the registry. Cheap when
@@ -1087,7 +1120,7 @@ void CallVehicleTicks()
 		[[maybe_unused]] VehicleID vehicle_index = v->index;
 
 		/* Vehicle could be deleted in this tick */
-		if (!v->Tick()) {
+		if (!TickVehicle(v)) {
 			assert(Vehicle::Get(vehicle_index) == nullptr);
 			continue;
 		}
