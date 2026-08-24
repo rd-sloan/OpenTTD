@@ -1693,7 +1693,7 @@ motion fields are written per tick, so the first mechanism is genuinely present
 here in a way it was not for `vcache`, but the second still needs an `offsetof`
 check rather than an assumption.
 
-### Phase 6 -- Devirtualising the tick dispatch (DANGER)
+### Phase 6 -- Devirtualising the tick dispatch (DANGER) -- sort cost measured, not started
 
 This is where phase 4 gets paid for. Phase 4 moves the fields and accepts a
 regression; this phase converts the loop to iterate views, so the registry lookup
@@ -1775,6 +1775,17 @@ Until that is done, variant A cannot actually be *proven* order-preserving beyon
 fingerprint check, and variant B's headline property cannot be demonstrated rather than
 argued. That is a real dependency and it should be scheduled, not discovered.
 
+**Descoped, deliberately.** The three items above are dropped: phase 6 gates on the
+existing fingerprint checks, the same ones every phase so far has used. The reason is
+that this project's purpose is measurement rather than a shippable branch, and the
+save-resume check would cost a tick-precise save plus the uninitialised-state
+investigation to produce evidence for a property that can be argued from the code -- an
+unsorted EnTT view walks packed order, packed order is a function of history, and
+`src/tests/entt_smoke.cpp` already pins that. What is lost is that variant B's
+divergence is demonstrated by argument and a unit test rather than by a failing
+end-to-end check, and variant A's order preservation rests on the fingerprint alone.
+That is a weaker guarantee, stated here so nobody later mistakes it for a strong one.
+
 Given that, variant B is scoped as a **measurement branch, not a foundation.**
 Nothing gets built on top of it, and phase 7 continues to target variant A. It is
 playable single-player -- a player cannot observe that resuming produced a different
@@ -1801,11 +1812,105 @@ variant A is viable at all. **Do this first** -- it is an hour's work that could
 change the whole shape of the phase, and this document's record is that the cheap
 measurement usually beats the confident argument.
 
+*Done. The paragraph above is kept as written because the measurement contradicted part
+of it -- see "The sort, measured" below, where one wentbourne run turns out to be
+exactly the wrong way to answer the question.*
+
 If the sort does turn out to dominate, the honest options are to accept
 pool-order iteration with no locality win (variant A becomes just devirtualisation,
 which is still worth something), or to note that canonical order and packed
 locality are fundamentally in tension here and let variant B's number speak to what
 that tension costs. Both are legitimate results; neither is a failure of the phase.
+
+#### The sort, measured -- and the fixtures disagree by a factor of 74
+
+Done, and it was worth doing first. `SortVehicleRegistry()` now records call count,
+sort count, time, and the registration and unregistration churn that sets the dirty
+flag; the report carries them as `ecs.sort_*`. Fingerprints unchanged on both fixtures
+and 102 of 102 tests, since none of this touches game state.
+
+| | Hilbergen | wentbourne |
+| --- | --- | --- |
+| Vehicle parts | 2,818 | 85,259 |
+| Ticks | 20,000 | 5,000 |
+| Ticks that found the registry dirty | **88.3%** | **2.56%** |
+| Churn per tick (registrations) | 1.09 | 0.107 |
+| Key sort, mean | 35.9 us | 1,623 us |
+| Component `sort_as`, mean | 18.4 us | 913 us |
+| Total sort time | 960 ms | 325 ms |
+| **Share of the game loop** | **10.4%** | **0.14%** |
+
+**The small fixture is the expensive one, by 74x in relative terms.** That inverts the
+assumption the section above was built on. The O(n log n) is not what decides this: the
+30x larger save pays a 5x larger cost *per sort* and still comes out two orders of
+magnitude cheaper overall, because it sorts 128 times where Hilbergen sorts 17,665.
+**Sort cost is set by how often the dirty flag fires, and that is a property of the
+savegame, not of its size.**
+
+The churn is create/destroy balanced almost exactly -- 21,771 against 21,765 on
+Hilbergen, 534 against 534 on wentbourne -- which is the signature of short-lived effect
+vehicles (smoke, sparks) rather than of players building things. Hilbergen fits that
+reading arithmetically: 88 effect vehicles alive at 1.09 created per tick implies a mean
+lifetime around 80 ticks, which is what an effect vehicle lives. Wentbourne does not fit
+it -- 231 alive at 0.107 per tick implies 2,159 ticks, far too long for smoke -- so its
+effect population must be mostly long-lived, and the low churn is unexplained rather than
+understood. Recorded as a loose end; it does not change the numbers.
+
+So **variant A is viable, but the tax is real and it is worst on the precision
+fixture.** Phase 6 must beat 10.4% on Hilbergen, not the 0.14% a single wentbourne run
+would have suggested. The plan above says "a single wentbourne run then says whether
+variant A is viable at all", and that was wrong: wentbourne alone would have reported
+the sort as free and hidden the entire cost. **Run both fixtures whenever the answer
+might depend on churn rather than on scale.**
+
+#### Sorting the key storage is not sorting the registry
+
+Found while instrumenting, and it would have quietly cost the phase its headline.
+`registry.sort<VehicleRef>()` orders the `VehicleRef` storage and nothing else. The
+component storages are separate sparse sets with their own packed arrays, so a
+`view<VehicleMotion>` would have walked them in an order that was neither ascending nor
+matched to the key -- with no locality, which is the entire point of variant A.
+
+Matching them is `registry.sort<To, VehicleRef>()`, EnTT's `sort_as`, one linear pass per
+storage rather than another comparison sort. It is now done for all four components, and
+it costs a further 51% on top of the key sort on Hilbergen and 56% on wentbourne. Timed
+separately as `ecs.sort_components_ms` because the two scale differently.
+
+The trap to record: **a component added in `RegisterVehicleEntity` and forgotten in
+`SortVehicleRegistry` is not a correctness bug today** -- nothing iterates a component
+storage for game state yet -- **but it silently costs phase 6 the locality it exists to
+buy.** No test catches that, and the fingerprint cannot: the order is right, the data is
+right, only the layout is wrong.
+
+#### A 5.3x speedup that is a 16.8x slowdown
+
+The sort runs on an array that is already sorted except for a handful of appended
+entities, which is the textbook case for insertion sort over introsort. EnTT takes the
+algorithm as a parameter, so this is a one-word change and was measured rather than
+argued.
+
+| Fixture | `std_sort` | `insertion_sort` | |
+| --- | --- | --- | --- |
+| Hilbergen, mean per sort | 35.9 us | 6.8 us | **5.3x faster** |
+| wentbourne, mean per sort | 1,623 us | 27,249 us | **16.8x slower** |
+
+Both are the same one-word change and the fingerprints held in both cases. The cause is
+swap-and-pop: destroying an entity moves the *last* element of the packed array into the
+hole, so one destruction in an 85,000 element array displaces an element by up to 85,000
+positions, and insertion sort pays that displacement linearly. Hilbergen churns often but
+is small; wentbourne is large, so each of its rare sorts faces a few enormous
+displacements.
+
+Left as `std_sort`, which is the algorithm that never falls over. The available win is
+recorded rather than taken, because taking it needs a guard -- count structural changes
+since the last sort and pick the algorithm from that count, rather than picking one
+statically -- and that guard belongs in phase 6 with its own measurement. A mass
+destruction event such as a bankruptcy would be the worst case, and neither fixture
+exercises one.
+
+The transferable part is the shape of the result: **the optimisation that is obviously
+right for the fixture you are iterating on can be catastrophic on the one you are not.**
+Both numbers came from the same one-word change, twenty minutes apart.
 
 **Exit:** standard criteria for variant A, including the new save-resume check.
 For variant B: save format byte-identical, both variants build and play, the

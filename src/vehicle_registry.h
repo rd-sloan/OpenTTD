@@ -101,6 +101,28 @@ inline entt::entity GetVehicleEntity(VehicleID id)
 
 size_t GetVehicleEntityCount();
 
+/**
+ * What keeping canonical iteration order costs.
+ *
+ * Phase 6 variant A only gets its locality if the storage is genuinely sorted, so the
+ * sort runs whenever a vehicle was created or destroyed. Whether that is free or fatal
+ * depends entirely on how often the dirty flag fires, which is a property of the
+ * savegame rather than of the code -- hence a measurement rather than an argument.
+ * @see SortVehicleRegistry
+ */
+struct VehicleRegistrySortStats {
+	uint64_t calls = 0; ///< Calls to #SortVehicleRegistry, i.e. iteration points that needed the order.
+	uint64_t sorts = 0; ///< Calls that found the registry dirty and therefore sorted. #calls minus this is the cheap path.
+	uint64_t entities_sorted = 0; ///< Live set size summed over those sorts, which is what the O(n log n) applies to.
+	uint64_t sort_ns = 0; ///< Time spent sorting the #VehicleRef key storage. Nanoseconds, because a small fixture sorts in under a microsecond.
+	uint64_t sort_components_ns = 0; ///< Time spent matching the component storages to it, which is linear per storage rather than O(n log n).
+	uint64_t registrations = 0; ///< Entities created. Together with #unregistrations, the churn that sets the dirty flag.
+	uint64_t unregistrations = 0; ///< Entities destroyed.
+};
+
+const VehicleRegistrySortStats &GetVehicleRegistrySortStats();
+void ResetVehicleRegistrySortStats();
+
 void SortVehicleRegistry();
 bool ValidateVehicleRegistry();
 

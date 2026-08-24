@@ -45,10 +45,22 @@
 #include "vehicle_base.h"
 #include "vehicle_components.h"
 
+#include <chrono>
+
 #include "safeguards.h"
 
 /** @copydoc _vehicle_registry_data */
 VehicleRegistryData *_vehicle_registry_data = nullptr;
+
+/**
+ * Tally of what the ordering discipline costs, reported by the benchmark harness.
+ *
+ * A file-scope object rather than a member of #VehicleRegistryData, because nothing
+ * inline touches it and the registry data is deliberately never destroyed. It is
+ * unconditional: the whole thing is a handful of increments per structural change plus
+ * two clock reads per sort, and a sort happens at most once per tick.
+ */
+static VehicleRegistrySortStats _sort_stats{};
 
 /**
  * Create the registry data on first use.
@@ -84,6 +96,27 @@ size_t GetVehicleEntityCount()
 }
 
 /**
+ * Get the sort cost tally.
+ * @return The stats accumulated since the last reset.
+ */
+const VehicleRegistrySortStats &GetVehicleRegistrySortStats()
+{
+	return _sort_stats;
+}
+
+/**
+ * Start the tally afresh.
+ *
+ * Called at the start of a measured run so that the figures describe the ticks that were
+ * timed. Without it the registration count is swamped by savegame load, which creates
+ * every vehicle in the world and says nothing about the churn rate during play.
+ */
+void ResetVehicleRegistrySortStats()
+{
+	_sort_stats = VehicleRegistrySortStats{};
+}
+
+/**
  * Create the entity for a newly constructed vehicle.
  * @param id The vehicle that was constructed.
  * @return The entity, which the vehicle stores so that component access needs no lookup.
@@ -112,6 +145,7 @@ entt::entity RegisterVehicleEntity(VehicleID id)
 	data.entity_by_vehicle_id[index] = entity;
 
 	data.dirty = true;
+	_sort_stats.registrations++;
 
 	return entity;
 }
@@ -140,6 +174,7 @@ void UnregisterVehicleEntity(VehicleID id)
 	data.entity_by_vehicle_id[index] = entt::null;
 
 	data.dirty = true;
+	_sort_stats.unregistrations++;
 }
 
 /**
@@ -147,15 +182,46 @@ void UnregisterVehicleEntity(VehicleID id)
  *
  * Call this before any iteration whose result can affect the game state. It is cheap
  * when nothing changed, which is the common case within a tick.
+ *
+ * Sorting #VehicleRef alone would only fix the order a `view<VehicleRef>` walks in. The
+ * component storages are separate sparse sets with their own packed arrays, so they are
+ * matched to it afterwards -- otherwise a view over #VehicleMotion visits the same
+ * vehicles in a different order *and* with no locality, which is precisely the property
+ * phase 6 is meant to buy. That second part is `sort_as`, a linear pass per storage
+ * rather than another comparison sort, and it is timed separately because the two scale
+ * differently and the phase 6 decision needs to see which one dominates.
+ *
+ * Timed into #_sort_stats. The clock reads sit inside the dirty branch so that the cheap
+ * path stays a load, a branch and an increment: measuring the non-sort would cost more
+ * than the non-sort does.
  */
 void SortVehicleRegistry()
 {
 	VehicleRegistryData &data = Data();
+
+	_sort_stats.calls++;
 	if (!data.dirty) return;
 
+	const auto start = std::chrono::steady_clock::now();
 	data.registry.sort<VehicleRef>([](const VehicleRef &lhs, const VehicleRef &rhs) {
 		return lhs.id < rhs.id;
 	});
+	const auto key_sorted = std::chrono::steady_clock::now();
+
+	/* Every component attached in RegisterVehicleEntity, in that order. A component added
+	 * there and forgotten here is not a correctness bug today, since nothing iterates a
+	 * component storage for game state yet, but it silently costs phase 6 its locality. */
+	data.registry.sort<VehicleColourMap, VehicleRef>();
+	data.registry.sort<VehicleCacheComponent, VehicleRef>();
+	data.registry.sort<VehicleMotion, VehicleRef>();
+	data.registry.sort<VehiclePosition, VehicleRef>();
+	const auto all_sorted = std::chrono::steady_clock::now();
+
+	_sort_stats.sorts++;
+	_sort_stats.sort_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(key_sorted - start).count();
+	_sort_stats.sort_components_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(all_sorted - key_sorted).count();
+	_sort_stats.entities_sorted += GetVehicleEntityCount();
+
 	data.dirty = false;
 
 	/* Cheap enough to run on every structural change, and it catches a leaked or

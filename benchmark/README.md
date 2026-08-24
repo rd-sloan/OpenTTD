@@ -43,6 +43,31 @@ always equal `load.vehicle_parts`, and `ecs.registry_valid` must be 1 -- it chec
 entity per pooled vehicle, a correct identity mapping in both directions, and ascending
 `VehicleID` iteration order. Both are cheap to eyeball and worth checking on every run.
 
+### What the sort keys mean
+
+The registry is re-sorted whenever a vehicle is created or destroyed, because canonical
+iteration order is what keeps the simulation deterministic. These keys say what that
+costs, and they were added to decide whether phase 6's order-preserving variant is worth
+building.
+
+| Key | Meaning |
+| --- | --- |
+| `ecs.sort_calls` | Calls to `SortVehicleRegistry`. One per tick, since the only call site is the top of `CallVehicleTicks`. |
+| `ecs.sorts` | Calls that found the registry dirty and therefore sorted. |
+| `ecs.sort_dirty_pct` | The ratio of those two, i.e. the fraction of ticks in which something was created or destroyed. **This is the figure that decides the cost**, far more than the vehicle count. |
+| `ecs.registrations` / `ecs.unregistrations` | Entities created and destroyed during the run. They should be close to equal in a steady state; the churn is mostly short-lived effect vehicles. |
+| `ecs.sort_ms` / `ecs.sort_mean_us` | Sorting the `VehicleRef` key storage. O(n log n). |
+| `ecs.sort_components_ms` / `ecs.sort_components_mean_us` | Matching the four component storages to it with `sort_as`. Linear per storage, and it adds about half again on top of the key sort. |
+| `ecs.sort_total_ms`, `ecs.sort_total_per_tick_us`, `ecs.sort_total_pct_of_game_loop` | Both halves together, which is what the ordering discipline actually costs. |
+
+The counters start when a savegame finishes loading, not at process start, so
+`ecs.registrations` reports churn during play rather than the size of the world.
+
+**Read `sort_total_pct_of_game_loop` per fixture, never as one number.** Hilbergen pays
+10.4% and wentbourne 0.14% for the same code, because Hilbergen finds the registry dirty
+on 88% of ticks against wentbourne's 2.6%. The fixture that is 30x smaller is 74x more
+expensive in relative terms. Churn rate, not scale.
+
 The `shadow.` keys track fields part way through migration, where the value lives both on
 `Vehicle` and in a component and every read compares the two. `mismatches` must be zero.
 Note that `comparisons` of zero is **not** a pass: it means shadow mode was compiled out,

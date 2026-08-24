@@ -28,6 +28,7 @@
 #include "../company_func.h"
 #include "../disaster_vehicle.h"
 #include "../economy_base.h"
+#include "../vehicle_registry.h"
 
 #include "../safeguards.h"
 
@@ -562,6 +563,13 @@ void AfterLoadVehiclesPhase2(bool part_of_load)
 		if (v->type != VehicleType::Effect) v->UpdatePosition();
 		v->UpdateViewport(false);
 	}
+
+	/* The registry has just been repopulated wholesale, so the churn counters start
+	 * again from here. Otherwise every report would show one registration per vehicle in
+	 * the savegame, which says how big the world is rather than how often it changes --
+	 * and the point of the counters is the latter. Not on a NewGRF reload, which happens
+	 * mid-game and would zero a run's figures halfway through. */
+	if (part_of_load) ResetVehicleRegistrySortStats();
 }
 
 bool TrainController(Train *v, Vehicle *nomove, bool reverse = true); // From train_cmd.cpp

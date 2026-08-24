@@ -263,6 +263,46 @@ void WriteBenchmarkStats(std::string_view filename, uint ticks, uint64_t wallclo
 	 * ascending VehicleID iteration order. Reported after a full run so that it covers
 	 * the vehicle creation and destruction that happened during it. */
 	fmt::print(f, "ecs.vehicle_entities\t{}\n", GetVehicleEntityCount());
+
+	/* What the ordering discipline costs, which is the input to the phase 6 variant A
+	 * decision. Emitted before the validity check on purpose: that check sorts, so
+	 * reading these afterwards would report the harness's own sort as part of the run. */
+	const VehicleRegistrySortStats &sort = GetVehicleRegistrySortStats();
+	fmt::print(f, "ecs.sort_calls\t{}\n", sort.calls);
+	fmt::print(f, "ecs.sorts\t{}\n", sort.sorts);
+	fmt::print(f, "ecs.registrations\t{}\n", sort.registrations);
+	fmt::print(f, "ecs.unregistrations\t{}\n", sort.unregistrations);
+	fmt::print(f, "ecs.sort_ms\t{:.3f}\n", static_cast<double>(sort.sort_ns) / 1000000.0);
+	fmt::print(f, "ecs.sort_components_ms\t{:.3f}\n", static_cast<double>(sort.sort_components_ns) / 1000000.0);
+
+	/* The two halves together, which is what phase 6 variant A would actually pay. */
+	const uint64_t sort_total_ns = sort.sort_ns + sort.sort_components_ns;
+	fmt::print(f, "ecs.sort_total_ms\t{:.3f}\n", static_cast<double>(sort_total_ns) / 1000000.0);
+
+	/* The share of calls that found the registry dirty. On a once-per-tick call site this
+	 * is the fraction of ticks in which some vehicle was created or destroyed, which is
+	 * the figure that decides whether the sort amortises away or dominates. */
+	if (sort.calls != 0) {
+		fmt::print(f, "ecs.sort_dirty_pct\t{:.2f}\n", 100.0 * static_cast<double>(sort.sorts) / static_cast<double>(sort.calls));
+	}
+
+	if (sort.sorts != 0) {
+		fmt::print(f, "ecs.sort_mean_us\t{:.3f}\n", static_cast<double>(sort.sort_ns) / 1000.0 / static_cast<double>(sort.sorts));
+		fmt::print(f, "ecs.sort_components_mean_us\t{:.3f}\n", static_cast<double>(sort.sort_components_ns) / 1000.0 / static_cast<double>(sort.sorts));
+		fmt::print(f, "ecs.sort_mean_entities\t{:.1f}\n", static_cast<double>(sort.entities_sorted) / static_cast<double>(sort.sorts));
+	}
+
+	/* Per tick and share of the game loop are reported for the total only, since that is
+	 * the figure to weigh phase 6's gain against. The split lives in the means above. */
+	if (ticks != 0) {
+		fmt::print(f, "ecs.sort_total_per_tick_us\t{:.3f}\n", static_cast<double>(sort_total_ns) / 1000.0 / static_cast<double>(ticks));
+	}
+
+	if (game_loop_us != 0) {
+		fmt::print(f, "ecs.sort_total_pct_of_game_loop\t{:.2f}\n",
+				100.0 * (static_cast<double>(sort_total_ns) / 1000.0) / static_cast<double>(game_loop_us));
+	}
+
 	fmt::print(f, "ecs.registry_valid\t{}\n", ValidateVehicleRegistry() ? 1 : 0);
 
 	/* Shadow verification for fields mid-migration. Mismatches must be zero; a non-zero
