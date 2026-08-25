@@ -1,5 +1,19 @@
 # OpenTTD
 
+# EnTT Migration Notes
+- This branch was a test to move OpenTTD to EnTT. I have no prior knowledge of OpenTTD, and I fully used Claude for all planning and migration.
+
+Claude's plan and log can be found in `docs/ecs-migration.md`, and a shorter claude summary can be found in `docs/ecs-summary.md`. 
+My own human thoughts/summary of the exercise is in `docs/ecs-summary-human.md`. All of the benchmarks claude ran can be found in `benchmark/example benchmarks/`
+
+The TL;DR was this was not a productive refactor. We ended up splitting up data that was previously densely packed, and caused a signficant regression in performance.
+
+
+-----------------------------------------------------------------------------------
+                              BEGIN OG README
+-----------------------------------------------------------------------------------
+
+
 ## Table of contents
 
 - 1.0) [About](#10-about)
