@@ -34,7 +34,9 @@ I found that claude *loves* its rabbit holes.
 	- Sometimes this iteration felt a little overkill, but Claude didn't seem to understand the idea of "good enough".
 - Another example is one time I asked why the train struct didn't change sizes after it removed a few members from it. That was a mistake. In every phase after that, it would keep checking the size and layout of the train struct again. It would insert temporary probes to get the exact layout of the struct, and then remove them. 
 	- This is a case where I was just curious the first time, I didn't need it to be checked every single time after that. Saying "It's probably the layout" is good enough lol, but Claude wanted the precise answer.
-- One more thing was it randomly dumped the disassembly of the game to validate that the compiler actually devirtualized something. Seemed extremely overkill lol.
+- It randomly dumped the disassembly of the game to validate that the compiler actually devirtualized something. Seemed extremely overkill lol.
+- It built an entire 'Shadow system' to validate that behavior wasn't changed as we moved logic into components. 
+    - It used it once the first time it transferred variables, and did not use it when it updated all of the other variables.
 - Watching it work step by step was interesting. 
 	- A few times I saw it make up fake variables, get a compiler error and then correct itself, literally saying "Oh I made up that variable, let me make sure that any time I use a variable it actually exists in this other file."
 
