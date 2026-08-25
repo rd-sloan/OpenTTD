@@ -297,4 +297,10 @@ char (&ArraySizeHelper(T (&array)[N]))[N];
 #	define MAX_PATH 260
 #endif
 
+/* Profiler instrumentation macros. Included here so they are available everywhere without
+ * per-file includes, and so the Tracy headers are pulled in before safeguards.h gets a
+ * chance to define memcpy and friends into compile errors. Expands to nothing unless
+ * WITH_TRACY is defined. */
+#include "profiling.h"
+
 #endif /* STDAFX_H */

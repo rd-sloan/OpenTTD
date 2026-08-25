@@ -376,6 +376,7 @@ add_files(
     picker_func.h
     picker_gui.cpp
     picker_gui.h
+    profiling.h
     progress.cpp
     progress.h
     provider_manager.h

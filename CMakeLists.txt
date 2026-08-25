@@ -296,6 +296,45 @@ if(ANDROID)
     target_link_libraries(openttd_test PRIVATE log)
 endif()
 
+# Tracy profiler client, pinned to v0.14.0.
+#
+# This does not come from vcpkg: the tracy port is 0.13.1 both at the baseline pinned in
+# vcpkg.json and at current vcpkg HEAD, and 0.14.0 is the agreed version. It is pinned
+# rather than tracking latest because 0.14.1 changed the wire protocol, so bumping would
+# invalidate every capture taken before it. See docs/tracy-integration-plan.md.
+if(OPTION_TRACY)
+    include(FetchContent)
+
+    # On-demand is mandatory, not a preference. Without it the client records from process
+    # start and buffers everything, which a headless 20,000 tick run cannot afford, and it
+    # is what keeps an instrumented build playable when no profiler is attached.
+    set(TRACY_ON_DEMAND ON CACHE BOOL "" FORCE)
+    set(TRACY_ENABLE ON CACHE BOOL "" FORCE)
+    set(TRACY_STATIC ON CACHE BOOL "" FORCE)
+    # Frame screenshots are useless here and cost a thread.
+    set(TRACY_NO_FRAME_IMAGE ON CACHE BOOL "" FORCE)
+    # OpenTTD already opens listening sockets; do not add another reachable one.
+    set(TRACY_ONLY_LOCALHOST ON CACHE BOOL "" FORCE)
+    # TRACY_NO_EXIT is deliberately left off. It would guarantee the tail of a headless
+    # capture, but it also hangs the game at exit whenever no profiler is attached, which
+    # would make this tree useless for interactive testing.
+
+    FetchContent_Declare(tracy
+        GIT_REPOSITORY https://github.com/wolfpld/tracy.git
+        GIT_TAG v0.14.0
+        GIT_SHALLOW TRUE
+    )
+    FetchContent_MakeAvailable(tracy)
+
+    # Linked to all three targets explicitly rather than relying on transitivity, because
+    # openttd_lib is an OBJECT library and does not reliably propagate the static library
+    # to its consumers. openttd_test matters here as well: it is created in this directory,
+    # so add_definitions(-DWITH_TRACY) reaches it and it needs the symbols to match.
+    target_link_libraries(openttd_lib Tracy::TracyClient)
+    target_link_libraries(openttd Tracy::TracyClient)
+    target_link_libraries(openttd_test PRIVATE Tracy::TracyClient)
+endif()
+
 include(Catch)
 catch_discover_tests(openttd_test)
 
