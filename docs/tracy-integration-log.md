@@ -173,3 +173,34 @@ interactive gate, which needs a person: that the framerate window in `build-trac
 the same range as `build-release` with no profiler attached, and that a profiler connects and
 disconnects twice without stalling the game. Both are deferred to T1, when there is something
 in a trace worth looking at.
+
+### 2026-08-25, T0 blockers cleared
+
+Both blockers recorded above are resolved. T1 is unblocked.
+
+**Fixtures restored.** Sloan put the savegames back. `benchmark/saves/` now holds
+`Hilbergen.sav` (0.6 MB) and `wentbourne.sav` (5.2 MB), so the state fingerprint gate can run
+from T1 onward. They remain untracked and local, as the harness README intends.
+
+**Profiler installed at `C:\git\tracy-0.14.0`.** Downloaded from the v0.14.0 release,
+`windows-0.14.0.zip`, 15,951,463 bytes, SHA256
+`2b4b013b52a6473ff699c6e018566ad70e3098a14967c384d014c2c24dcf8167`, verified against the
+digest GitHub publishes for the asset. `tracy-capture.exe` self-reports `0.14.0 / 099df3d`.
+
+Eight tools ship in it. The ones this work uses:
+
+| Tool | Use |
+| --- | --- |
+| `tracy-profiler.exe` | The interactive GUI. Connect to a running client, or open a `.tracy` file. |
+| `tracy-capture.exe` | Headless capture to a file. Start it before a benchmark run, since `TRACY_NO_EXIT` is off. |
+| `tracy-capture-daemon.exe` | Discovers clients over UDP and captures each to its own file. Removes the start-first ordering requirement. |
+| `tracy-csvexport.exe` | Exports zone statistics from a `.tracy` file, for putting numbers next to harness output. |
+| `tracy-merge.exe` | Combines multi-process traces. Not expected to be needed here. |
+
+Deliberately outside the repository, so it cannot dirty the working copy or be committed by
+accident, and alongside `C:\git\vcpkg` where the other external toolchain already lives.
+
+**Do not replace this with a later build.** Client and server must match, and 0.14.1 changed
+the wire protocol. The client is pinned to v0.14.0 by `FetchContent` in `CMakeLists.txt`, so a
+0.14.1 profiler would fail to connect. If the profiler is ever upgraded, the pin has to move
+in the same change and every capture taken before it becomes incomparable.
