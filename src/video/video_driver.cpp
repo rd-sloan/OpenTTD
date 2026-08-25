@@ -40,6 +40,12 @@ void VideoDriver::GameLoop()
 
 		::GameLoop();
 	}
+
+	/* Named secondary frame: the simulation tick. The unnamed primary frame is the draw
+	 * tick in Tick(), because that is what a player perceives as a frame and what Tracy's
+	 * frame statistics are built around. When is_game_threaded these two run on different
+	 * threads, which is exactly why they are separate frame types rather than one. */
+	OTTD_FRAME_MARK_N("GameTick");
 }
 
 void VideoDriver::GameThread()
@@ -160,6 +166,10 @@ void VideoDriver::Tick()
 		this->Paint();
 
 		this->UnlockVideoBuffer();
+
+		/* End of the primary frame. The draw tick is the frame a player sees, so it gets
+		 * the unnamed frame type that Tracy's frame statistics window reports on. */
+		OTTD_FRAME_MARK;
 
 		/* Wait till the first successful drawing tick before marking the driver as operational. */
 		static bool first_draw_tick = true;

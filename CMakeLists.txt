@@ -326,6 +326,14 @@ if(OPTION_TRACY)
     )
     FetchContent_MakeAvailable(tracy)
 
+    # Match the CRT that the openttd targets use. The MSVC block earlier in this file
+    # switches them to the static runtime when the vcpkg triplet ends in -static, but it
+    # runs before TracyClient exists and only names the three openttd targets, so Tracy
+    # would otherwise be built against /MD and fail to link with LNK2038.
+    if(MSVC AND VCPKG_TARGET_TRIPLET MATCHES "-static" AND NOT VCPKG_TARGET_TRIPLET MATCHES "-md")
+        set_property(TARGET TracyClient PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    endif()
+
     # Linked to all three targets explicitly rather than relying on transitivity, because
     # openttd_lib is an OBJECT library and does not reliably propagate the static library
     # to its consumers. openttd_test matters here as well: it is created in this directory,

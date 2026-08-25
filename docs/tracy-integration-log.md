@@ -204,3 +204,108 @@ accident, and alongside `C:\git\vcpkg` where the other external toolchain alread
 the wire protocol. The client is pinned to v0.14.0 by `FetchContent` in `CMakeLists.txt`, so a
 0.14.1 profiler would fail to connect. If the profiler is ever upgraded, the pin has to move
 in the same change and every capture taken before it becomes incomparable.
+
+### 2026-08-25, phase T1: thread names, frame marks, sections
+
+Skeleton instrumentation. No zones yet, which is the intended end state: a capture now shows
+thread timelines and frame pacing with nothing inside them.
+
+Files touched: `src/os/windows/win32.cpp`, `src/os/unix/unix.cpp`, `src/openttd.cpp`,
+`src/video/video_driver.cpp`, `src/video/null_v.cpp`, `src/saveload/saveload.cpp`,
+`src/profiling.h`, `CMakeLists.txt`.
+
+#### T0 hid a link failure, and T1 found it
+
+**The most important thing in this phase.** T0 reported that `TracyClient.lib` linked into
+both executables. That was a false positive. Nothing referenced a Tracy symbol, so the linker
+never pulled `TracyClient.obj` in, and the mismatch underneath went unnoticed. The first
+actual call site produced:
+
+```
+TracyClient.lib(TracyClient.obj) : error LNK2038: mismatch detected for 'RuntimeLibrary':
+value 'MD_DynamicRelease' doesn't match value 'MT_StaticRelease' in win32_main.obj
+TracyClient.lib(TracyClient.obj) : error LNK2001: unresolved external symbol __imp__fstat64i32
+TracyClient.lib(TracyClient.obj) : error LNK2001: unresolved external symbol __imp__stat64i32
+```
+
+The MSVC block at the top of `CMakeLists.txt` switches to the static CRT when the vcpkg
+triplet ends in `-static`, but it names the three openttd targets explicitly and runs long
+before `TracyClient` exists, so Tracy was built against `/MD`. Fixed by setting
+`MSVC_RUNTIME_LIBRARY` on `TracyClient` immediately after `FetchContent_MakeAvailable`. The
+two unresolved `stat64i32` symbols were a symptom of the same mismatch and went away with it.
+
+The lesson generalises beyond this bug: **"it linked" proves nothing about a library nothing
+calls.** Any future phase that first exercises a new dependency should expect link errors
+that earlier phases appeared to rule out.
+
+#### Deviations from the plan
+
+**Added `ScopedProfilerSection` to `src/profiling.h`.** Tracy's section API is id-based, so a
+raw enter/leave pair leaks the section on any early exit. `DoLoad` in particular throws
+through `SlError`, which would leak on every failed load. The RAII wrapper takes the name as a
+`%s` argument rather than as the format string, since `TracySectionEnter` is printf-style and
+a name containing a percent sign would otherwise be read as a conversion specifier.
+
+**The Startup section still uses the raw macros.** It has to end where the main loop begins,
+not where `openttd_main` returns, so RAII does not fit without restructuring the function.
+`openttd_main` has five early returns before that point and each leaves the section open.
+That is deliberate and harmless: every one of those paths exits the process immediately, and
+`SectionLeave` on an id of 0 is a no-op anyway.
+
+**Sectioned `DoLoad` rather than `SaveOrLoad`.** The plan named `SaveOrLoad`, but
+`LoadWithFilter` bypasses it and both routes converge on `DoLoad`, so that is the single point
+covering every load. Preview reads that populate the load dialog are marked `LoadCheck` and
+real loads `LoadSavegame`, rather than suppressing previews, since a stall while browsing
+files is worth being able to see.
+
+**On-demand mode makes the Startup section mostly theoretical.** `SectionEnter` returns 0
+when no profiler is connected, and interactively you launch the game and connect afterwards,
+so startup is over before recording begins. It does record in the headless capture flow, where
+`tracy-capture` is already listening. Kept for that case; do not expect to see it in an
+interactive trace.
+
+#### Gate results
+
+| Gate | Result |
+| --- | --- |
+| `openttd_test`, `build`, Debug | 98 cases, 2176 assertions, pass. |
+| `openttd_test`, `build-tracy`, RelWithDebInfo | 98 cases, 2176 assertions, pass. |
+| State fingerprint, Hilbergen, 20,000 ticks | **PASS.** `build-tracy` reproduces the `build-release` baseline exactly, combined hash `015ED3D109C5CCCC`. |
+| Frame marks reach a trace | **Verified.** See below. |
+
+Frame marks were checked rather than assumed, at three run lengths:
+
+| Ticks | Frames reported by `tracy-capture` | Zones |
+| --- | --- | --- |
+| 1,000 | 1,003 | 0 |
+| 3,000 | 3,003 | 0 |
+| 5,000 | 5,003 | 0 |
+
+Exactly one primary frame per simulated tick. The constant offset of three does not scale
+with run length and is not explained; it is small, fixed, and not worth chasing. Zones at zero
+is a positive result here, not an absence of evidence: T1 adds no zones and none leaked in.
+
+A sample capture is kept at `benchmark/out/t1-Hilbergen-5000ticks.tracy` for opening in the
+profiler. `benchmark/out` is untracked, so it will not be committed.
+
+**On-demand costs nothing measurable when unattached.** `build-tracy` ran the 20,000 tick
+Hilbergen fixture at 1,782 ticks/s against `build-release` at 1,770. That difference is well
+inside the roughly 7% noise band the harness README documents for this fixture, and the sign
+is the wrong way round for a cost, so read it as no measurable difference rather than as a
+speedup.
+
+#### Not verified, and needs the GUI
+
+`tracy-capture` reports frames and zones. It does not report thread names, named frame sets or
+sections, and `tracy-csvexport` only handles zones, messages and plots. So three T1 additions
+are **compiled and believed working but unconfirmed**: the `GameTick` named frame set, the
+three sections, and thread naming.
+
+Thread naming in particular cannot be confirmed headlessly at all, because the null driver
+never starts a game thread and the fixture starts no link graph jobs, so there is only the
+main thread to name.
+
+These need a person with `tracy-profiler.exe`. Open the sample capture above for the frame
+sets and sections, and attach to an interactive session for thread names. Deferred rather than
+dropped, and carried into T3, which is the first phase that genuinely cannot be validated any
+other way.

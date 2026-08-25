@@ -539,4 +539,9 @@ void SetCurrentThreadName(const std::string &name)
 	using SetThreadDescriptionProc = HRESULT(WINAPI *)(HANDLE, PCWSTR);
 	static const SetThreadDescriptionProc std_proc = GetKernel32Function("SetThreadDescription");
 	if (std_proc != nullptr) std_proc(GetCurrentThread(), OTTD2FS(name).c_str());
+
+	/* Naming here covers every thread started via StartNewThread, plus the sound and
+	 * console threads that call this directly. The main thread names itself separately,
+	 * since it never goes through here. */
+	OTTD_THREAD_NAME(name.c_str());
 }

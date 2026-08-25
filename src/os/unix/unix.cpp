@@ -250,4 +250,8 @@ void SetCurrentThreadName([[maybe_unused]] const std::string &thread_name)
 #if defined(__APPLE__)
 	MacOSSetThreadName(thread_name);
 #endif /* defined(__APPLE__) */
+
+	/* Naming here covers every thread started via StartNewThread. The main thread names
+	 * itself separately, since it never goes through here. */
+	OTTD_THREAD_NAME(thread_name.c_str());
 }

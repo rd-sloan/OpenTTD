@@ -60,10 +60,24 @@ void VideoDriver_Null::MainLoop()
 
 	const auto start = std::chrono::steady_clock::now();
 
-	for (i = 0; i < this->ticks; i++) {
-		::GameLoop();
-		::InputLoop();
-		::UpdateWindows();
+	{
+		/* Marks the measured run, so that startup and savegame loading can be excluded
+		 * from statistics and comparisons in the profiler. */
+		OTTD_SECTION(benchmark_section, "Benchmark");
+
+		for (i = 0; i < this->ticks; i++) {
+			::GameLoop();
+			::InputLoop();
+			::UpdateWindows();
+
+			/* This driver has no draw tick and no game thread, so one iteration is both
+			 * frames at once. Emitting both keeps headless traces lined up with
+			 * interactive ones, where they are separate and on different threads.
+			 * Note that ::GameLoop() is called directly here rather than through
+			 * VideoDriver::GameLoop(), so the mark in that function never fires. */
+			OTTD_FRAME_MARK_N("GameTick");
+			OTTD_FRAME_MARK;
+		}
 	}
 
 	const auto elapsed = std::chrono::steady_clock::now() - start;

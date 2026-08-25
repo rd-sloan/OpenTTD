@@ -495,6 +495,17 @@ static std::vector<OptionData> CreateOptions()
  */
 int openttd_main(std::span<std::string_view> arguments)
 {
+	/* The main thread never goes through SetCurrentThreadName, so it names itself here.
+	 * Without this the busiest thread in a trace is the one without a label. */
+	OTTD_THREAD_NAME("ottd:main");
+
+	/* Startup runs until the main loop begins, so it cannot use the scoped section helper.
+	 * The early returns below leave it unterminated, which is harmless: each of them exits
+	 * the process, and Tracy tolerates a section still open at disconnect.
+	 * Note that on-demand mode records nothing before a profiler connects, so this section
+	 * only appears when capture was already listening, as in the headless benchmark flow. */
+	const auto startup_section = OTTD_SECTION_ENTER("Startup");
+
 	_game_session_stats.start_time = std::chrono::steady_clock::now();
 	_game_session_stats.savegame_size = std::nullopt;
 
@@ -803,6 +814,8 @@ int openttd_main(std::span<std::string_view> arguments)
 
 	/* ScanNewGRFFiles now has control over the scanner. */
 	RequestNewGRFScan(scanner.release());
+
+	OTTD_SECTION_LEAVE(startup_section);
 
 	VideoDriver::GetInstance()->MainLoop();
 

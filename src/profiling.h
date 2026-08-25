@@ -62,6 +62,30 @@
 /** End the program phase identified by \a id. */
 #	define OTTD_SECTION_LEAVE(id) TracySectionLeave(id)
 
+/**
+ * RAII marker for a coarse program phase, such as startup or loading a savegame.
+ *
+ * Tracy's own section API is id-based rather than scope-based, so this wrapper exists to
+ * leave the phase on every exit path. #openttd_main alone has five early returns between
+ * the start of the startup phase and reaching the main loop.
+ */
+class ScopedProfilerSection {
+public:
+	/* The name is passed as an argument rather than as the format string, so that a name
+	 * containing a percent sign cannot be read as a conversion specifier. */
+	explicit ScopedProfilerSection(const char *name) : id(TracySectionEnter("%s", name)) {}
+	~ScopedProfilerSection() { TracySectionLeave(this->id); }
+
+	ScopedProfilerSection(const ScopedProfilerSection &) = delete;
+	ScopedProfilerSection &operator=(const ScopedProfilerSection &) = delete;
+
+private:
+	uint32_t id; ///< Section id, or 0 when no profiler is attached.
+};
+
+/** Mark the enclosing scope as a program phase. Preferred over the enter/leave macros. */
+#	define OTTD_SECTION(variable, name) ScopedProfilerSection variable(name)
+
 /** Declare a mutex whose contention is recorded. Replaces a plain declaration. */
 #	define OTTD_LOCKABLE(type, name) TracyLockable(type, name)
 /** As #OTTD_LOCKABLE, with an explicit description instead of the variable name. */
@@ -87,6 +111,7 @@
  * that the caller's variable does not become unused. */
 #	define OTTD_SECTION_ENTER(name) 0
 #	define OTTD_SECTION_LEAVE(id) ((void)(id))
+#	define OTTD_SECTION(variable, name)
 
 #	define OTTD_LOCKABLE(type, name) type name
 #	define OTTD_LOCKABLE_N(type, name, description) type name

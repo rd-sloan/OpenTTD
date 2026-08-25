@@ -3204,6 +3204,12 @@ static const SaveLoadFormat *DetermineSaveLoadFormat(SaveLoadFormatTag tag, uint
  */
 static SaveLoadResult DoLoad(std::shared_ptr<LoadFilter> reader, bool load_check)
 {
+	/* Both callers of this function route through here, so one marker covers every load.
+	 * The preview reads that populate the load dialog are marked separately rather than
+	 * suppressed, since a stall while browsing files is worth being able to see.
+	 * Scoped rather than paired, because SlError throws and must not leak the section. */
+	OTTD_SECTION(load_section, load_check ? "LoadCheck" : "LoadSavegame");
+
 	_sl.lf = std::move(reader);
 
 	if (load_check) {
