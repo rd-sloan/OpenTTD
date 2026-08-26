@@ -1035,6 +1035,8 @@ void RunVehicleCalendarDayProc()
  */
 static void RunEconomyVehicleDayProc()
 {
+	OTTD_ZONE_N("RunEconomyVehicleDayProc");
+
 	if (_game_mode != GameMode::Normal) return;
 
 	/* Run the economy day proc for every DAY_TICKS vehicle starting at TimerGameEconomy::date_fract. */
@@ -1084,6 +1086,12 @@ static void RunEconomyVehicleDayProc()
  */
 static bool TickVehicle(Vehicle *v)
 {
+	/* Detail tier: once per vehicle *part*, every type. This is the coverage the
+	 * PerformanceElement bridge cannot give, since GameLoopTrains only fires for front
+	 * engines and no element covers effect or disaster vehicles at all. Wentbourne has
+	 * 85,259 parts against 13,899 consists, so this is where that gap becomes visible. */
+	OTTD_ZONE_DETAIL_N("TickVehicle");
+
 	switch (v->type) {
 		case VehicleType::Train: return Train::From(v)->Tick();
 		case VehicleType::Road: return RoadVehicle::From(v)->Tick();
@@ -1112,6 +1120,10 @@ static void AgeCargoAndPlaySound(T *v)
 {
 	static_assert(Type == VehicleType::Train || Type == VehicleType::Road || Type == VehicleType::Ship || Type == VehicleType::Aircraft,
 			"Effect and disaster vehicles carry no cargo and make no running sound");
+
+	/* Detail tier, and a sibling of the TickVehicle zone rather than a child, so the two
+	 * separate a part's tick cost from its cargo ageing and sound work. */
+	OTTD_ZONE_DETAIL;
 
 	Vehicle *front = v->First();
 
@@ -1226,6 +1238,8 @@ void CallVehicleTicks()
 	 * no vehicle was created or destroyed since the last tick. Nothing depends on the
 	 * registry yet in phase 1, but this is the call site later phases rely on, so it
 	 * is established here where it can be validated in isolation. */
+	OTTD_ZONE_N("CallVehicleTicks");
+
 	SortVehicleRegistry();
 
 	/* Pool size, so parts rather than consists. This is the count that scales with the
@@ -1279,6 +1293,14 @@ void CallVehicleTicks()
 		}
 	}
 #endif /* OTTD_ECS_TICK_TYPED_PASSES */
+
+	/* Declared rather than wrapped in a scope: this loop is the last thing in the function,
+	 * so the zone's lifetime already matches it exactly. The vehicle tick pass above gets no
+	 * zone of its own, and shows up as this function's self time instead. That keeps the diff
+	 * out of a function the ECS migration is actively changing, and loses nothing, since
+	 * every other part of the function is named.
+	 * Explicitly named because the CallVehicleTicks zone above already occupies this scope. */
+	OTTD_ZONE_NAMED_N(autoreplace_zone, "Autoreplace");
 
 	for (auto &it : _vehicles_to_autoreplace) {
 		Vehicle *v = Vehicle::Get(it.first);

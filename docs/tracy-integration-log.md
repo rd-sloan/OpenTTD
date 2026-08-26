@@ -707,6 +707,109 @@ gives a control: that trace should show no contention at all.
 **Confirmed the same day.** Sloan ran an interactive session and observed both the lock
 contention and the five plots. T3 is verified in full and nothing in it remains on trust.
 
+### 2026-08-26, phase T4: vehicle tick zones
+
+Standard-tier zones for the per-tick structure of `CallVehicleTicks`, and a detail-tier zone
+per vehicle *part*. Files touched: `src/vehicle.cpp`, `src/vehicle_registry.cpp`,
+`src/profiling.h`.
+
+#### Two zones cannot share a scope
+
+`ZoneScoped` and friends all declare a variable literally named `___tracy_scoped_zone`, so a
+second one in the same scope is a redefinition error. `CallVehicleTicks` needs two: one for
+the function and one for the autoreplace loop. Tracy's answer is `ZoneNamedN(varname, name,
+active)`, now wrapped as `OTTD_ZONE_NAMED_N`.
+
+Worth recording because of how it surfaced. **The `build` tree compiled cleanly**, since every
+macro expands to nothing there, and both Tracy trees then failed with `C2374`. That is the
+third time this session that the Tracy-off configuration has proved nothing about the Tracy-on
+one, after the CRT mismatch in T1 and the untested detail tier in T2. Build `build-tracy`
+before believing a compile.
+
+#### Deviations from the plan
+
+**The vehicle tick pass gets no zone of its own.** Wrapping it would mean adding a scope
+around the `#ifdef`/`#else` block and reindenting roughly thirty lines of `CallVehicleTicks`,
+which is the function the ECS migration is actively rewriting. Every other part of the
+function is named, so the pass shows up as `CallVehicleTicks` self time, which carries the
+same information for a one-line diff instead of a thirty-line one.
+
+**The typed passes are deliberately not instrumented.** `OTTD_ECS_TICK_TYPED_PASSES` is
+defined only when `OTTD_ECS_TICK_VARIANT_B` or `_C` is, and both are commented out in
+`vehicle_registry.h`, so `TickVehiclesOfType` is not compiled in any current build. Zones
+there would be dead code that no capture could check. Given that the last three phases each
+turned up a defect in exactly the code that had not been observed in a trace, adding
+unverifiable instrumentation is the wrong trade. Add and verify those zones when a variant is
+actually enabled; the template will need a per-type name, since a literal cannot vary across
+instantiations.
+
+**No zone was added around the `LoadUnloadStation` loop.** The plan asked for one, but that
+scope already carries the `GameLoopEconomy` measurer, so T2's bridge zone covers it. A second
+zone on the same scope is noise.
+
+#### Gate results
+
+| Gate | Result |
+| --- | --- |
+| `openttd_test`, `build`, Debug | 98 cases, 2176 assertions, pass. |
+| `openttd_test`, `build-tracy` | 98 cases, 2176 assertions, pass. |
+| State fingerprint, Hilbergen, 20,000 ticks | **PASS**, `015ED3D109C5CCCC`. |
+| Both tiers reach a trace with correct counts | **Verified**, below. |
+
+Standard tier, 2,000 headless Hilbergen ticks. All four new zones fire exactly once per tick:
+
+| Zone | Per tick | Mean |
+| --- | --- | --- |
+| `CallVehicleTicks` | 1 | 409 us |
+| `SortVehicleRegistry` | 1 | 48.1 us |
+| `RunEconomyVehicleDayProc` | 1 | 1.7 us |
+| `Autoreplace` | 1 | 79 ns |
+
+`SortVehicleRegistry` at 48.1 us matches the `ecs.sort_us` plot's 47.8 us mean from T3, which
+is a zone and a plot built from separate code agreeing on the same quantity.
+
+Detail tier, 300 ticks, 1,735,577 zones:
+
+| Zone | Per tick | Mean | Cross-check |
+| --- | --- | --- | --- |
+| `TickVehicle` | 2,813.7 | 129 ns | T3's `vehicles.parts` plot averaged 2,813.4 |
+| `AgeCargoAndPlaySound` | 2,730 | 16 ns | exactly Hilbergen's train part count |
+| `GameLoopTrains` | 231 | 1,387 ns | the consist count, as in the T2 follow-up |
+
+**Parts against consists is now directly visible in one trace**: 2,813.7 parts to 231
+consists, a factor of 12.2 on this fixture. That ratio is the thing the harness README spends
+a section explaining, and it is now a property of the capture rather than a calculation.
+
+#### The detail tier inflates what it measures
+
+`GameLoop` averages 441 us per tick under the standard tier and 611 us under the detail tier.
+`CallVehicleTicks` goes 409 us to 570 us. So roughly 5,500 extra zones per tick cost about
+**40% of the measured region** on this fixture.
+
+**Read detail traces for shape and counts, not for absolute cost.** Relative comparisons
+inside a single detail trace are still sound, since every part pays the same overhead, but a
+number taken from one does not belong next to a `build-release` figure. This is the same
+discipline the harness README applies to assert-enabled builds, and it applies more strongly
+here.
+
+#### Trace sizing revised again
+
+3,030.88 KB for 1,735,577 zones is **1.8 bytes per zone**, against 4.7 measured in the T2
+follow-up and 7.3 in T2. Tracy's compression improves sharply with volume, so the earlier
+figures were pessimistic for exactly the captures that need sizing.
+
+Re-estimating wentbourne with detail: about 184,000 zones per tick, so a 300 tick capture is
+roughly 55 million zones and **about 100 MB**. That is far more comfortable than the 330 MB
+projected in the T2 follow-up or the 500 MB in T2. Use 1.8 bytes per zone for large captures
+and 7 for short ones.
+
+#### The instrumentation cost still does not show
+
+`build-tracy` ran 20,000 Hilbergen ticks at 1,735 ticks/s. Across the four phases the figures
+are 1,782, 1,734, 1,775 and 1,735 against `build-release`'s 1,770, which is a band of about
+2.7% with no trend. Standard-tier instrumentation remains free at this fixture's noise level
+even after four phases of additions.
+
 #### The T2 slowdown was noise
 
 The T2 entry recorded 1,734 ticks/s against T1's 1,782 and flagged it as inside the noise band

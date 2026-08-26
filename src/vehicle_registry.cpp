@@ -233,6 +233,8 @@ void UnregisterVehicleEntity(VehicleID id)
  */
 void SortVehicleRegistry()
 {
+	OTTD_ZONE_N("SortVehicleRegistry");
+
 	VehicleRegistryData &data = Data();
 
 	_sort_stats.calls++;

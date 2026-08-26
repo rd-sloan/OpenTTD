@@ -42,6 +42,13 @@
 #	define OTTD_ZONE_N(name) ZoneScopedN(name)
 /** Scoped zone with an explicit literal name and a colour. */
 #	define OTTD_ZONE_C(name, colour) ZoneScopedNC(name, colour)
+/**
+ * As #OTTD_ZONE_N, but with an explicit variable name.
+ *
+ * The plain forms all declare a variable called \c ___tracy_scoped_zone, so two of them in
+ * the same scope is a redefinition error. Use this for the second and later zones in a scope.
+ */
+#	define OTTD_ZONE_NAMED_N(variable, name) ZoneNamedN(variable, name, true)
 /** Attach runtime text to the zone in scope. */
 #	define OTTD_ZONE_TEXT(text, size) ZoneText(text, size)
 
@@ -98,6 +105,7 @@ private:
 #	define OTTD_ZONE
 #	define OTTD_ZONE_N(name)
 #	define OTTD_ZONE_C(name, colour)
+#	define OTTD_ZONE_NAMED_N(variable, name)
 #	define OTTD_ZONE_TEXT(text, size)
 
 #	define OTTD_FRAME_MARK
