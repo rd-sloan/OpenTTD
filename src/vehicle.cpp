@@ -1228,6 +1228,12 @@ void CallVehicleTicks()
 	 * is established here where it can be validated in isolation. */
 	SortVehicleRegistry();
 
+	/* Pool size, so parts rather than consists. This is the count that scales with the
+	 * memory traffic of the tick loop, and it moves during play as effect vehicles churn.
+	 * Consists are deliberately not plotted: counting them needs a full pool scan, which is
+	 * not worth adding to a tick just to draw a line. @see benchmark/README.md */
+	OTTD_PLOT("vehicles.parts", (int64_t)Vehicle::GetNumItems());
+
 	_vehicles_to_autoreplace.clear();
 
 	RunEconomyVehicleDayProc();

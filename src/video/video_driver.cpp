@@ -36,7 +36,7 @@ void VideoDriver::GameLoop()
 	if (this->next_game_tick < now - ALLOWED_DRIFT * this->GetGameInterval()) this->next_game_tick = now;
 
 	{
-		std::lock_guard<std::mutex> lock(this->game_state_mutex);
+		std::lock_guard lock(this->game_state_mutex);
 
 		::GameLoop();
 	}
@@ -62,7 +62,7 @@ void VideoDriver::GameThread()
 			 * optimization that if you unlock/lock a mutex in the same thread
 			 * quickly, it will never context switch even if there is another
 			 * thread waiting to take the lock on the same mutex. */
-			std::lock_guard<std::mutex> lock(this->game_thread_wait_mutex);
+			std::lock_guard lock(this->game_thread_wait_mutex);
 		}
 	}
 }
@@ -80,7 +80,7 @@ void VideoDriver::GameLoopPause()
 
 	{
 		/* See GameThread() for more details on this lock. */
-		std::lock_guard<std::mutex> lock(this->game_thread_wait_mutex);
+		std::lock_guard lock(this->game_thread_wait_mutex);
 	}
 
 	this->game_state_mutex.lock();
@@ -131,8 +131,8 @@ void VideoDriver::Tick()
 
 		{
 			/* Tell the game-thread to stop so we can have a go. */
-			std::lock_guard<std::mutex> lock_wait(this->game_thread_wait_mutex);
-			std::lock_guard<std::mutex> lock_state(this->game_state_mutex);
+			std::lock_guard lock_wait(this->game_thread_wait_mutex);
+			std::lock_guard lock_state(this->game_state_mutex);
 
 			/* Keep the interactive randomizer a bit more random by requesting
 			 * new values when-ever we can. */

@@ -245,7 +245,18 @@ void SortVehicleRegistry()
 	return;
 #else
 
-	if (!data.dirty) return;
+	/* Plotted on both paths so the series has a point every tick. The fraction of ticks that
+	 * find the registry dirty is what decides what the ordering discipline costs, far more
+	 * than the vehicle count does: Hilbergen is dirty on 88% of ticks against wentbourne's
+	 * 2.6%, for the same code. The whole-run average is in the benchmark report; this shows
+	 * whether the churn is steady or bursty, which the average cannot.
+	 * @see benchmark/README.md */
+	if (!data.dirty) {
+		OTTD_PLOT("ecs.registry_dirty", (int64_t)0);
+		OTTD_PLOT("ecs.sort_us", (double)0.0);
+		return;
+	}
+	OTTD_PLOT("ecs.registry_dirty", (int64_t)1);
 
 	const auto start = std::chrono::steady_clock::now();
 	data.registry.sort<VehicleRef>([](const VehicleRef &lhs, const VehicleRef &rhs) {
@@ -280,6 +291,10 @@ void SortVehicleRegistry()
 	_sort_stats.sort_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(key_sorted - start).count();
 	_sort_stats.sort_components_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(all_sorted - key_sorted).count();
 	_sort_stats.entities_sorted += GetVehicleEntityCount();
+
+	/* Both halves together, which is what the ordering discipline actually costs on this
+	 * tick. Microseconds rather than nanoseconds to match the report's sort_total_per_tick_us. */
+	OTTD_PLOT("ecs.sort_us", (double)std::chrono::duration_cast<std::chrono::nanoseconds>(all_sorted - start).count() / 1000.0);
 
 	data.dirty = false;
 

@@ -363,8 +363,11 @@ protected:
 
 	bool is_game_threaded;
 	std::thread game_thread;
-	std::mutex game_state_mutex;
-	std::mutex game_thread_wait_mutex;
+	/* Contention on these two is what the draw thread costs the game thread, and nothing
+	 * else measures it: GameLoop and Drawing each time their own work, not the wait. The
+	 * profiler wrappers are plain mutexes when Tracy is not compiled in. */
+	OTTD_LOCKABLE(std::mutex, game_state_mutex);
+	OTTD_LOCKABLE(std::mutex, game_thread_wait_mutex);
 
 	bool uses_hardware_acceleration;
 

@@ -616,3 +616,98 @@ pessimistic figure for short ones.
 That puts a full 5,000 tick wentbourne detail capture at roughly 70 million zones and about
 330 MB, rather than the 500 MB estimated in the T2 entry. Still large enough that a few hundred
 ticks is the right size for that fixture, but less alarming than it looked.
+
+### 2026-08-26, phase T3: lock contention and plots
+
+Files touched: `src/video/video_driver.hpp`, `src/video/video_driver.cpp`,
+`src/vehicle_registry.cpp`, `src/vehicle.cpp`, `src/animated_tile.cpp`,
+`src/linkgraph/linkgraphschedule.cpp`.
+
+#### Locks
+
+`game_state_mutex` and `game_thread_wait_mutex` are now `OTTD_LOCKABLE`, which is a plain
+`std::mutex` when Tracy is not compiled in. Eight usages, all inside `video_driver.cpp`, and
+the five `std::lock_guard<std::mutex>` declarations became plain `std::lock_guard` using class
+template argument deduction so they work under either configuration without macro noise. The
+manual `unlock`/`lock` pair in `GameLoopPause` needed no change, since `tracy::Lockable`
+provides both.
+
+#### Two of the six planned plots do not survive contact
+
+**`map.tileloop_tiles` is dropped.** `RunTileLoop` walks
+`1 << (Map::LogX() + Map::LogY() - TILE_UPDATE_FREQUENCY_LOG)` tiles, which is a constant for
+a given map size. The plot would be a flat line. `map.animated_tiles` replaces it: the
+animated tile list is also landscape workload, it is a cheap `size()` on a vector, and it
+actually moves as industries and stations start and stop animating.
+
+**`vehicles.consists` is dropped.** There is no cheap source. Counting primary vehicles needs
+a full pool scan, which on wentbourne is 85,259 iterations per tick added to a build purely to
+draw a line. `GroupStatistics::num_vehicle` looked like a candidate but its semantics were not
+verified, and shipping an unverified metric is worse than shipping none. Parts is the count
+that scales with memory traffic anyway, which is what the harness README recommends for
+data-layout work. The harness still computes consists correctly if the number is wanted.
+
+**`linkgraph.jobs_running` is plotted at transitions, not per tick.** `LinkGraphSchedule::running`
+is protected, so a free function cannot read it, and the count only changes in `SpawnNext` and
+`JoinNext`. Tracy holds a plot's last value between points, so a step function draws correctly
+from far fewer of them. This is better than the per-tick version the plan described, not a
+compromise.
+
+The four that shipped are `vehicles.parts`, `map.animated_tiles`, `ecs.registry_dirty` and
+`ecs.sort_us`, plus `linkgraph.jobs_running`.
+
+#### Gate results
+
+| Gate | Result |
+| --- | --- |
+| `openttd_test`, `build`, Debug | 98 cases, 2176 assertions, pass. |
+| `openttd_test`, `build-tracy`, RelWithDebInfo | 98 cases, 2176 assertions, pass. |
+| State fingerprint, Hilbergen, 20,000 ticks | **PASS**, `015ED3D109C5CCCC`. |
+| Plots reach a trace with correct values | **Verified**, see below. |
+| Lock contention visible | **Not verified.** Needs an interactive session; see below. |
+
+From a 3,000 tick headless Hilbergen capture, every plot present with the expected point count:
+3,000 points each for the per-tick plots and 20 for `linkgraph.jobs_running`, which is
+transitions only as designed.
+
+**The values cross-check against figures the harness derived independently**, which is the
+part worth trusting:
+
+| Plot | Observed | Independent figure |
+| --- | --- | --- |
+| `ecs.registry_dirty` | dirty on 2,643 of 3,000 ticks, 88.1% | harness README quotes 88% for Hilbergen |
+| `ecs.sort_us` | mean 47.8 us per tick, about 10% of a ~480 us loop tick | README quotes 10.4% of the game loop |
+| `vehicles.parts` | 2,800 to 2,834, mean 2,813 | report `load.vehicle_parts` is 2,818 |
+| `linkgraph.jobs_running` | 4 to 5 concurrent | matches the several `ottd:linkgraph` rows seen in T1 |
+
+Two instruments built from different data agreeing to a tenth of a percent on the dirty rate is
+much better evidence than a plot merely existing.
+
+#### What the plots already show that the report cannot
+
+`ecs.sort_us` ranges from 0 to **744 us** on a single tick, against a mean of 47.8 us and a
+game loop tick averaging roughly 480 us. So some individual ticks are spent mostly sorting the
+registry. The report's `sort_total_pct_of_game_loop` averages that away into a single 10.4%,
+which reads as a steady tax rather than as occasional ticks dominated by one operation. That
+distinction matters for the phase 6 decision, since a bursty cost and a steady one call for
+different fixes.
+
+#### Lock contention is not verified, and cannot be headlessly
+
+The null video driver never sets `is_game_threaded`, so it has no game thread and never
+contends either mutex. A headless capture therefore shows an empty lock timeline that is
+indistinguishable from zero contention. This was anticipated in the T1 entry and is now the
+concrete blocker for closing T3.
+
+Needs an interactive elevated session, threaded, with the profiler attached. Expect
+`game_state_mutex` to show the game thread blocked while the draw thread holds it across
+input, `UpdateWindows` and `PopulateSystemSprites`. Running once with `-v win32:no_threads`
+gives a control: that trace should show no contention at all.
+
+#### The T2 slowdown was noise
+
+The T2 entry recorded 1,734 ticks/s against T1's 1,782 and flagged it as inside the noise band
+but with the sign of a real cost. T3 measured 1,775 ticks/s having added lock wrappers and five
+plots on top. So the T2 figure was a low sample, not a trend, and the unattached cost of the
+instrumentation remains unmeasurable at this fixture's noise level. Recorded because the T2
+entry invited watching for a trend that does not exist.

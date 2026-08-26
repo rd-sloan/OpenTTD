@@ -76,6 +76,11 @@ void AnimateAnimatedTiles()
 {
 	PerformanceAccumulator landscape_framerate(PerformanceElement::GameLoopLandscape);
 
+	/* Stands in for the landscape workload. RunTileLoop is not worth plotting: it walks a
+	 * fixed count derived from the map size, so it would be a flat line. This list actually
+	 * moves, as industries and stations start and stop animating. */
+	OTTD_PLOT("map.animated_tiles", (int64_t)_animated_tiles.size());
+
 	for (auto it = std::begin(_animated_tiles); it != std::end(_animated_tiles); /* nothing */) {
 		TileIndex &tile = *it;
 

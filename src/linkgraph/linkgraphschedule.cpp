@@ -46,6 +46,13 @@ void LinkGraphSchedule::SpawnNext()
 		LinkGraphJob *job = LinkGraphJob::Create(*next);
 		job->SpawnThread();
 		this->running.push_back(job);
+
+		/* Plotted at the transitions rather than every tick. Tracy holds the last value
+		 * between points, so a step function draws correctly from far fewer of them, and
+		 * spawn and join are the only two places this count changes. Read it against the
+		 * ottd:linkgraph thread rows and GameLoopLinkGraph, which times the main thread
+		 * waiting for these to finish. */
+		OTTD_PLOT("linkgraph.jobs_running", (int64_t)this->running.size());
 	} else {
 		NOT_REACHED();
 	}
@@ -71,6 +78,10 @@ void LinkGraphSchedule::JoinNext()
 	LinkGraphJob *next = this->running.front();
 	if (!next->IsScheduledToBeJoined()) return;
 	this->running.pop_front();
+
+	/* See the matching plot in SpawnNext. */
+	OTTD_PLOT("linkgraph.jobs_running", (int64_t)this->running.size());
+
 	LinkGraphID id = next->LinkGraphIndex();
 	delete next; // implicitly joins the thread
 	if (LinkGraph::IsValidID(id)) {
