@@ -388,7 +388,38 @@ time. The plan's `linkgraph.jobs_running` plot is therefore measuring something 
 fixture, and `GameLoopLinkGraph`, which times the main thread waiting for those jobs, is worth
 reading against the thread rows rather than on its own.
 
-Verified via `SetCurrentThreadName`, which is the path every worker takes. The main thread is
-named by a separate explicit call in `openttd_main`, so `ottd:main` specifically was not
-called out in the report; it is expected among the rows and uses the same macro, but treat it
-as inferred rather than observed until someone confirms the label.
+Verified via `SetCurrentThreadName`, which is the path every worker takes.
+
+#### The main thread shows as "Main thread", and always will
+
+Checked because `ottd:main` was absent from the rows while `Main thread` was present. This is
+not a failure of `OTTD_THREAD_NAME`; Tracy declines to use the name.
+
+In `Profiler::HandleServerQuery` (`client/TracyProfiler.cpp:3918`), when the server asks for a
+thread's name:
+
+```cpp
+if( ptr == m_mainThread ) {
+    SendString( ptr, "Main thread", 11, QueueType::ThreadName );
+} else {
+    auto t = GetThreadNameData( (uint32_t)ptr );
+    ...
+}
+```
+
+`GetThreadNameData` is consulted only in the `else` branch. For the main thread Tracy replies
+with the hardcoded `"Main thread"` and never reads the stored name. So the call in
+`openttd_main` writes a record that nothing in the trace path can reach.
+
+The call is not useless. `tracy::SetThreadName` also calls the Windows `SetThreadDescription`,
+so `ottd:main` does show up in a debugger and in crash dumps, and for the main thread our call
+is the only thing that sets it, since the main thread never goes through
+`SetCurrentThreadName`. It is worth keeping on those grounds alone.
+
+**The comment above it is wrong and should be corrected.** It claims that without the call the
+busiest thread in a trace would be unlabelled. Tracy labels it either way. Whoever touches
+this next should not have to rediscover that from the Tracy source.
+
+Generalises to one rule for the rest of this work: **a name being stored is not a name being
+displayed.** Tracy has hardcoded and special-cased paths, and the only way to know an
+instrumentation call had the intended effect is to look at a trace.
