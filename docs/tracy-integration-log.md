@@ -544,3 +544,75 @@ The detail tier is only verified in the off direction. Nothing has yet built wit
 `OTTD_TRACY_DETAIL` defined, so the vehicle zones have never been emitted, and the 13,899 per
 tick figure is derived from call site analysis and the harness consist count rather than
 observed. T4 is where that tier gets exercised properly.
+
+*Superseded by the next entry: the detail tier now has a CMake option and has been captured.*
+
+### 2026-08-26, T2 follow-up: OPTION_TRACY_DETAIL, and the tier verified
+
+The detail tier had no switch. It was a bare preprocessor define, which meant hand-crafting
+`CMAKE_CXX_FLAGS` to use it. Now `OPTION_TRACY_DETAIL` sits next to `OPTION_TRACY` in
+`cmake/Options.cmake`, is reported by `show_options()`, and **fails configure with a
+FATAL_ERROR if set without `OPTION_TRACY`**, because on its own it changes nothing and a
+silent no-op would read as the tier being broken. That guard was tested by setting it on the
+`build` tree and confirming configure refuses.
+
+A fourth tree, `build-tracy-detail`, holds it. Separate rather than toggling `build-tracy`
+because `OTTD_TRACY_DETAIL` feeds `profiling.h`, which is in the precompiled header, so
+flipping it forces a full rebuild each way. Note that `build-tracy` stays the interactive
+tree per decision D2; this one is for captures.
+
+#### The per-consist reading is confirmed exactly
+
+First detail capture, Hilbergen, 500 headless ticks:
+
+| Zone | Count | Per tick |
+| --- | --- | --- |
+| `GameLoopTrains` | 115,500 | **231** |
+| `GameLoopLandscape` | 1,500 | 3 |
+| `GameLoop` | 500 | 1 |
+| `GameLoopEconomy` | 500 | 1 |
+| `AllScripts` | 500 | 1 |
+| `Drawing` | 187 | when dirty |
+| `ViewportDrawing` | 19 | subset |
+
+115,500 is exactly 231 x 500, and 231 is Hilbergen's consist count. The fixture holds 2,730
+train **parts**, so a per-part accumulator would have produced 1,365,000. This settles the
+question the T2 entry left open: the train accumulator really is inside
+`if (IsFrontEngine())` and fires once per consist. All seven counts sum to 118,706, exactly
+the total the capture reported.
+
+Road vehicles, ships and aircraft produced no zones because Hilbergen has none of them. Their
+detail zones remain unobserved, though the mechanism is now proven by trains.
+
+#### What the detail tier is actually for
+
+The one row that justifies the phase, `GameLoopTrains` over 115,500 samples:
+
+| Statistic | Value |
+| --- | --- |
+| mean | 1,379 ns |
+| min | 41 ns |
+| max | 179,790 ns |
+| std dev | 2,386 ns |
+
+A 4,385x spread between the cheapest and most expensive consist tick, and a standard deviation
+larger than the mean, so the distribution has a long tail rather than being a tight cluster.
+**The harness cannot express this.** It reports `ns_per_consist_tick` as a single average, and
+an average of a long-tailed distribution invites exactly the wrong conclusion about where the
+time goes.
+
+The two instruments do corroborate each other on the average. The harness reported
+`perf.trains.ns_per_object_tick` of 121.5 for Hilbergen; scaled by the 2,730 parts to 231
+consists ratio that is about 1,436 ns per consist, against Tracy's 1,379 ns mean. Different
+run lengths and different trees, so treat the agreement as a sanity check rather than a
+measurement.
+
+#### Revised trace sizing
+
+561.19 KB for 118,706 zones is **4.7 bytes per zone**, against 7.3 measured on the much
+smaller T2 trace. Larger traces compress better, so use 4.7 for detail captures and 7.3 as the
+pessimistic figure for short ones.
+
+That puts a full 5,000 tick wentbourne detail capture at roughly 70 million zones and about
+330 MB, rather than the 500 MB estimated in the T2 entry. Still large enough that a few hundred
+ticks is the right size for that fixture, but less alarming than it looked.
