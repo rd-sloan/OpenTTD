@@ -11,3 +11,6 @@ docs/source/*
 # but not the savegame fixtures or the generated reports.
 /benchmark/out
 /benchmark/saves
+# Profiler captures. These reach tens or hundreds of megabytes once sampling is
+# on, so they must never be committed.
+/benchmark/manual-traces
