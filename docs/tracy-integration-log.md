@@ -886,6 +886,27 @@ It is not an optimisation target at 0.12% of the trace. It is a good illustratio
 two instruments are both worth having: sampling finds where the time is, zones find what is
 expensive per call, and those are different questions with different answers.
 
+#### Process gap: the detail tree went stale
+
+T5 was gated on `build` and `build-tracy` but **not** on `build-tracy-detail`, which was left
+holding a T4-era binary with no pathfinder zones in it. Sloan caught it. Nothing incorrect was
+claimed, since no T5 result came from that tree, but anyone running it would have got stale
+code with no indication.
+
+Rebuilt and re-verified: a 300 tick detail capture now carries both tiers, 1,735,760 zones,
+with `TickVehicle` at 844,120 and `AgeCargoAndPlaySound` at 819,000, identical to the T4
+capture, plus the five pathfinder zones.
+
+**Rule going forward: `build-tracy-detail` is a capture tree, not a gate tree, and its binary
+must be rebuilt immediately before any detail capture.** Its age is not a reliable signal,
+because most phases change instrumentation without changing anything the tree's own
+configuration would notice. Adding it to every phase's gates would mean a fourth full rebuild
+per phase for a tree used occasionally; rebuilding on demand is the right trade, provided the
+demand is actually honoured.
+
+The three gate trees remain `build` for the unit suite, `build-release` for the fingerprint
+baseline, and `build-tracy` for everything Tracy-specific.
+
 #### The T2 slowdown was noise
 
 The T2 entry recorded 1,734 ticks/s against T1's 1,782 and flagged it as inside the noise band
