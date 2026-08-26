@@ -423,3 +423,124 @@ this next should not have to rediscover that from the Tracy source.
 Generalises to one rule for the rest of this work: **a name being stored is not a name being
 displayed.** Tracy has hardcoded and special-cased paths, and the only way to know an
 instrumentation call had the intended effect is to look at a trace.
+
+### 2026-08-26, phase T2: the PerformanceElement bridge
+
+Every existing `PerformanceElement` measurement now also emits a Tracy zone. A
+`SourceLocationData` table indexed by the enum supplies the static source location that Tracy
+needs, since the measurement classes take their element as a runtime value and so cannot use
+`ZoneScopedN`.
+
+Files touched: `src/framerate_type.h`, `src/framerate_gui.cpp`.
+
+#### The plan was wrong about this phase being cheap
+
+The plan calls T2 the "biggest coverage gain per line changed" and puts it in the standard
+tier. **It is not a standard-tier change**, because four of the elements are measured inside
+`Vehicle::Tick` implementations rather than once per tick:
+
+| Element | Site | Fires |
+| --- | --- | --- |
+| `GameLoopTrains` | `train_cmd.cpp:4196`, inside `if (IsFrontEngine())` | per consist |
+| `GameLoopRoadVehicles` | `roadveh_cmd.cpp:1667`, function scope | per part |
+| `GameLoopShips` | `ship_cmd.cpp:794`, function scope | per part, and ships are single-part |
+| `GameLoopAircraft` | `aircraft_cmd.cpp:2177`, after the `IsNormalAircraft` guard | per normal aircraft |
+
+On wentbourne that sums to 4,833 + 5,499 + 2,818 + 749 = **13,899 zones per tick**, which is
+exactly the consist count in the harness README. Over a 5,000 tick run that is about 70
+million zones. At the 7.3 bytes per zone measured below, roughly 500 MB of trace.
+
+So the four vehicle elements are gated behind `OTTD_TRACY_DETAIL` through a new
+`IsPerformanceZoneActive`, passed to `tracy::ScopedZone`'s `is_active` parameter. It is
+`constexpr` and lives in the header because the element is a literal at every construction
+site, so the test folds away instead of branching inside the vehicle tick path.
+
+Without the gate, T2 would have broken decision D2: a build emitting 13,899 zones per tick is
+not one you can play.
+
+#### Sound needed no special handling after all
+
+The plan said the Sound element needed separate treatment because its timings are taken on the
+mixer thread and shuttled to the main thread through `_sound_perf_measurements`. That reasoning
+assumed the zone would be emitted where `_pf_data` is written.
+
+Putting the zone in the RAII object instead makes the problem disappear. `PerformanceMeasurer`
+for Sound is constructed and destructed on the mixer thread, in `MxMixSamples`, so the zone
+opens and closes on that thread, which is both what Tracy requires and where the work actually
+is. The deferred `_pf_data` path is untouched.
+
+#### Other deviations
+
+**Copy and move are deleted on both classes, in both configurations.** `tracy::ScopedZone` is
+neither copyable nor movable, so a Tracy build would otherwise reject code that a non-Tracy
+build accepts. Nothing copies these today; declaring it keeps the two configurations from
+diverging into a build that only fails with `OPTION_TRACY=ON`.
+
+**A `static_assert` cannot catch a missing table entry.** The plan assumed it could. The table
+is sized from `PerformanceElement::End`, so omitting an entry appends a zeroed one and compiles
+cleanly. An assertion in `GetPerformanceSourceLocation` catches it instead, and the header's
+"Adding new measurements" block was corrected to say so rather than repeating the wrong claim.
+
+That assertion is **dead in every currently configured tree**, because `build` has asserts and
+no Tracy while `build-tracy` has Tracy and no asserts. A zeroed entry would show up as an
+unnamed zone in a capture, which is the guard that actually works. Worth knowing before
+relying on the assert.
+
+**Source locations point at `framerate_gui.cpp`, not the measured code.** Deliberate: an
+accumulated element has several call sites and no single location. The `function` field carries
+the real enclosing function name instead, each one verified against the source rather than
+guessed.
+
+#### Gate results
+
+| Gate | Result |
+| --- | --- |
+| `openttd_test`, `build`, Debug | 98 cases, 2176 assertions, pass. |
+| `openttd_test`, `build-tracy`, RelWithDebInfo | 98 cases, 2176 assertions, pass. |
+| State fingerprint, Hilbergen, 20,000 ticks | **PASS**, `015ED3D109C5CCCC`, identical to baseline. |
+| Zone names map to the right elements | **Verified**, see below. |
+
+Zone counts from a 2,000 tick headless Hilbergen capture, via `tracy-csvexport`:
+
+| Zone | Count | Expected |
+| --- | --- | --- |
+| `GameLoop` | 2,000 | once per tick |
+| `GameLoopEconomy` | 2,000 | once per tick |
+| `GameLoopLandscape` | 6,000 | three call sites per tick |
+| `AllScripts` | 2,000 | once per tick |
+| `Drawing` | 718 | only when windows are dirty |
+| `ViewportDrawing` | 128 | a subset of those redraws |
+
+These sum to 12,846, which is exactly the zone total the capture reported. **This is what
+verifies the table is not shifted**, and it is a much stronger check than a passing build: an
+off-by-one would have attributed the 6,000 landscape zones to `GameLoopLinkGraph`.
+`GameLoopLandscape` landing on exactly three times the tick count is the specific signature
+that pins the alignment.
+
+The four vehicle zones are absent, confirming the detail gate works in the off direction.
+`Video` and `Sound` are absent because the null drivers never paint or mix, and the script
+elements are absent because this fixture runs none.
+
+Trace size was 92.02 KB for 12,846 zones and 2,003 frames, so about **7.3 bytes per zone** on
+disk. Use that for sizing future captures rather than the 12 bytes the plan guessed.
+
+#### Two things worth knowing
+
+**`AllScripts` emits a zone even when the harness records nothing.** Its destructor has a hack
+that marks the element inactive and returns early when no script is running, but the zone is a
+member and closes regardless. So Tracy shows 2,000 `AllScripts` zones at about 139 ns each
+while the framerate window shows the element as inactive. Both are correct. Anyone comparing
+the two instruments on this element needs to know why they disagree.
+
+**The unattached cost is now non-zero but not resolvable.** `build-tracy` ran 20,000 Hilbergen
+ticks at 1,734 ticks/s against 1,782 in T1 and 1,770 for `build-release`. That is a 2.7% drop
+from T1, well inside the roughly 7% band the harness README documents for this fixture, so it
+cannot be called a real cost from one sample. It is the first measurement whose sign points the
+right way for one, though, and worth rechecking if T3 adds another few percent.
+
+#### Untested
+
+The detail tier is only verified in the off direction. Nothing has yet built with
+`OTTD_TRACY_DETAIL` defined, so the vehicle zones have never been emitted, and the 13,899 per
+tick figure is derived from call site analysis and the harness consist count rather than
+observed. T4 is where that tier gets exercised properly.

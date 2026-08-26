@@ -261,7 +261,77 @@ namespace {
 		PerformanceData(1), // PerformanceElement::AI14
 	};
 
+#ifdef WITH_TRACY
+	/**
+	 * Profiler source locations, one per performance element, in PerformanceElement order.
+	 *
+	 * Tracy needs a static source location per zone, so the measurement classes cannot use
+	 * ZoneScopedN: their element is a runtime value. This table supplies one instead.
+	 *
+	 * The file and line are this table's own, not the measured code's. An accumulated element
+	 * has several call sites and no single location, so the zone name is what identifies the
+	 * subsystem. The function names are the real enclosing functions, recorded here so the
+	 * zone details point somewhere useful.
+	 *
+	 * Colours group related work: earth tones for simulation, reds for rendering, greys for
+	 * scripts. The four vehicle types keep distinct colours so a busy timeline is readable
+	 * without reading labels.
+	 * @hideinitializer
+	 */
+	static const EnumIndexArray<tracy::SourceLocationData, PerformanceElement, PerformanceElement::End> _pf_srcloc = {
+		tracy::SourceLocationData{ "GameLoop",             "StateGameLoop",        __FILE__, __LINE__, 0x2E4272 }, // PerformanceElement::GameLoop
+		tracy::SourceLocationData{ "GameLoopEconomy",      "CallVehicleTicks",     __FILE__, __LINE__, 0xC17D11 }, // PerformanceElement::GameLoopEconomy
+		tracy::SourceLocationData{ "GameLoopTrains",       "Train::Tick",          __FILE__, __LINE__, 0x4E9A06 }, // PerformanceElement::GameLoopTrains
+		tracy::SourceLocationData{ "GameLoopRoadVehicles", "RoadVehicle::Tick",    __FILE__, __LINE__, 0xC4A000 }, // PerformanceElement::GameLoopRoadVehicles
+		tracy::SourceLocationData{ "GameLoopShips",        "Ship::Tick",           __FILE__, __LINE__, 0x3465A4 }, // PerformanceElement::GameLoopShips
+		tracy::SourceLocationData{ "GameLoopAircraft",     "Aircraft::Tick",       __FILE__, __LINE__, 0x75507B }, // PerformanceElement::GameLoopAircraft
+		tracy::SourceLocationData{ "GameLoopLandscape",    "RunTileLoop et al",    __FILE__, __LINE__, 0x8F5902 }, // PerformanceElement::GameLoopLandscape
+		tracy::SourceLocationData{ "GameLoopLinkGraph",    "OnTick_LinkGraph",     __FILE__, __LINE__, 0xCE5C00 }, // PerformanceElement::GameLoopLinkGraph
+		tracy::SourceLocationData{ "Drawing",              "UpdateWindows",        __FILE__, __LINE__, 0xA40000 }, // PerformanceElement::Drawing
+		tracy::SourceLocationData{ "ViewportDrawing",      "Window::DrawViewport", __FILE__, __LINE__, 0xCC0000 }, // PerformanceElement::ViewportDrawing
+		tracy::SourceLocationData{ "Video",                "VideoDriver::Paint",   __FILE__, __LINE__, 0xEF2929 }, // PerformanceElement::Video
+		tracy::SourceLocationData{ "Sound",                "MxMixSamples",         __FILE__, __LINE__, 0x5C3566 }, // PerformanceElement::Sound
+		tracy::SourceLocationData{ "AllScripts",           "StateGameLoop",        __FILE__, __LINE__, 0x555753 }, // PerformanceElement::AllScripts
+		tracy::SourceLocationData{ "GameScript",           "Game::GameLoop",       __FILE__, __LINE__, 0x888A85 }, // PerformanceElement::GameScript
+		tracy::SourceLocationData{ "AI 0",                 "AI::GameLoop",         __FILE__, __LINE__, 0xBABDB6 }, // PerformanceElement::AI0 ...
+		tracy::SourceLocationData{ "AI 1",                 "AI::GameLoop",         __FILE__, __LINE__, 0xBABDB6 },
+		tracy::SourceLocationData{ "AI 2",                 "AI::GameLoop",         __FILE__, __LINE__, 0xBABDB6 },
+		tracy::SourceLocationData{ "AI 3",                 "AI::GameLoop",         __FILE__, __LINE__, 0xBABDB6 },
+		tracy::SourceLocationData{ "AI 4",                 "AI::GameLoop",         __FILE__, __LINE__, 0xBABDB6 },
+		tracy::SourceLocationData{ "AI 5",                 "AI::GameLoop",         __FILE__, __LINE__, 0xBABDB6 },
+		tracy::SourceLocationData{ "AI 6",                 "AI::GameLoop",         __FILE__, __LINE__, 0xBABDB6 },
+		tracy::SourceLocationData{ "AI 7",                 "AI::GameLoop",         __FILE__, __LINE__, 0xBABDB6 },
+		tracy::SourceLocationData{ "AI 8",                 "AI::GameLoop",         __FILE__, __LINE__, 0xBABDB6 },
+		tracy::SourceLocationData{ "AI 9",                 "AI::GameLoop",         __FILE__, __LINE__, 0xBABDB6 },
+		tracy::SourceLocationData{ "AI 10",                "AI::GameLoop",         __FILE__, __LINE__, 0xBABDB6 },
+		tracy::SourceLocationData{ "AI 11",                "AI::GameLoop",         __FILE__, __LINE__, 0xBABDB6 },
+		tracy::SourceLocationData{ "AI 12",                "AI::GameLoop",         __FILE__, __LINE__, 0xBABDB6 },
+		tracy::SourceLocationData{ "AI 13",                "AI::GameLoop",         __FILE__, __LINE__, 0xBABDB6 },
+		tracy::SourceLocationData{ "AI 14",                "AI::GameLoop",         __FILE__, __LINE__, 0xBABDB6 }, // PerformanceElement::AI14
+	};
+#endif /* WITH_TRACY */
+
 }
+
+#ifdef WITH_TRACY
+/**
+ * Get the profiler source location for a performance element.
+ *
+ * The table is sized from PerformanceElement::End, so adding an element without extending it
+ * appends a zeroed entry rather than failing to compile. The assertion on the name is what
+ * actually catches that, the first time the new element is measured.
+ *
+ * @param elem The element to look up.
+ * @return Source location to open a zone with.
+ */
+const tracy::SourceLocationData *GetPerformanceSourceLocation(PerformanceElement elem)
+{
+	assert(elem < PerformanceElement::End);
+	assert(_pf_srcloc[elem].name != nullptr);
+
+	return &_pf_srcloc[elem];
+}
+#endif /* WITH_TRACY */
 
 
 /**
@@ -282,6 +352,9 @@ static TimingMeasurement GetPerformanceTimer()
  * @param elem The element to be measured
  */
 PerformanceMeasurer::PerformanceMeasurer(PerformanceElement elem)
+#ifdef WITH_TRACY
+	: zone(GetPerformanceSourceLocation(elem), -1, IsPerformanceZoneActive(elem))
+#endif /* WITH_TRACY */
 {
 	assert(elem < PerformanceElement::End);
 
@@ -354,6 +427,9 @@ void PerformanceMeasurer::SetExpectedRate(double rate)
  * @param elem The element to be measured
  */
 PerformanceAccumulator::PerformanceAccumulator(PerformanceElement elem)
+#ifdef WITH_TRACY
+	: zone(GetPerformanceSourceLocation(elem), -1, IsPerformanceZoneActive(elem))
+#endif /* WITH_TRACY */
 {
 	assert(elem < PerformanceElement::End);
 

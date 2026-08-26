@@ -23,6 +23,12 @@
  * Search for \c STR_FRAMERATE_GAMELOOP and \c STR_FRAMETIME_CAPTION_GAMELOOP in \c english.txt to find those.
  *
  * @par
+ * Fourth, when the Tracy profiler bridge is compiled in, add an entry to the \c _pf_srcloc array in \c framerate_gui.cpp, again in the same position.
+ * That array is sized from \c PerformanceElement::End, so omitting an entry appends a zeroed one instead of failing to compile; an assertion in #GetPerformanceSourceLocation catches it the first time the element is measured.
+ * Nothing at all catches an entry in the wrong position, which would silently label every following zone with its neighbour's name, so check a capture rather than trusting the build.
+ * If the new element is measured once per object rather than once per frame or tick, also add it to #IsPerformanceZoneActive so that its zones stay behind \c OTTD_TRACY_DETAIL.
+ *
+ * @par
  * Last is actually adding the measurements. There are two ways to measure, either one-shot (a single function/block handling all processing),
  * or as an accumulated element (multiple functions/blocks that need to be summed across each frame/tick).
  * Use either the PerformanceMeasurer or the PerformanceAccumulator class respectively for the two cases.
@@ -80,6 +86,46 @@ DECLARE_ENUM_AS_SEQUENTIAL(PerformanceElement)
 /** Type used to hold a performance timing measurement */
 typedef uint64_t TimingMeasurement;
 
+#ifdef WITH_TRACY
+
+/**
+ * Whether an element's profiler zone should be emitted.
+ *
+ * The four vehicle elements are measured inside \c Vehicle::Tick implementations, so they fire
+ * once per vehicle rather than once per tick. Wentbourne emits 13,899 of them per tick, which
+ * is roughly 70 million zones over a 5,000 tick run and far more trace than is usable. They
+ * are therefore detail tier and stay compiled out unless \c OTTD_TRACY_DETAIL is defined.
+ *
+ * Every other element fires at most a few times per frame and is always on.
+ *
+ * Kept inline and constexpr because the argument is a literal at every construction site, so
+ * the compiler folds the whole test away rather than branching in the vehicle tick path.
+ *
+ * @param elem The element to test.
+ * @return True when a zone should be emitted for this element.
+ */
+constexpr bool IsPerformanceZoneActive(PerformanceElement elem)
+{
+	switch (elem) {
+		case PerformanceElement::GameLoopTrains:
+		case PerformanceElement::GameLoopRoadVehicles:
+		case PerformanceElement::GameLoopShips:
+		case PerformanceElement::GameLoopAircraft:
+#ifdef OTTD_TRACY_DETAIL
+			return true;
+#else
+			return false;
+#endif /* OTTD_TRACY_DETAIL */
+
+		default:
+			return true;
+	}
+}
+
+const tracy::SourceLocationData *GetPerformanceSourceLocation(PerformanceElement elem);
+
+#endif /* WITH_TRACY */
+
 /**
  * RAII class for measuring simple elements of performance.
  * Construct an object with the appropriate element parameter when processing begins,
@@ -90,9 +136,21 @@ typedef uint64_t TimingMeasurement;
 class PerformanceMeasurer {
 	PerformanceElement elem;
 	TimingMeasurement start_time;
+#ifdef WITH_TRACY
+	/* Emitted on whichever thread constructs this object, which is what Tracy needs. For
+	 * PerformanceElement::Sound that is the mixer thread, so the zone lands where the work
+	 * happens rather than where _pf_data is later drained. */
+	tracy::ScopedZone zone;
+#endif /* WITH_TRACY */
 public:
 	PerformanceMeasurer(PerformanceElement elem);
 	~PerformanceMeasurer();
+
+	/* Declared in both configurations so that a Tracy build cannot fail to compile something
+	 * that builds without it. tracy::ScopedZone is neither copyable nor movable. */
+	PerformanceMeasurer(const PerformanceMeasurer &) = delete;
+	PerformanceMeasurer &operator=(const PerformanceMeasurer &) = delete;
+
 	void SetExpectedRate(double rate);
 	static void SetInactive(PerformanceElement elem);
 	static void Paused(PerformanceElement elem);
@@ -112,9 +170,19 @@ public:
 class PerformanceAccumulator {
 	PerformanceElement elem;
 	TimingMeasurement start_time;
+#ifdef WITH_TRACY
+	/* One zone per measured block rather than one per frame. That is the point: the
+	 * accumulator sums the blocks and hides their distribution, and the zones show it. */
+	tracy::ScopedZone zone;
+#endif /* WITH_TRACY */
 public:
 	PerformanceAccumulator(PerformanceElement elem);
 	~PerformanceAccumulator();
+
+	/* See the equivalent in PerformanceMeasurer. */
+	PerformanceAccumulator(const PerformanceAccumulator &) = delete;
+	PerformanceAccumulator &operator=(const PerformanceAccumulator &) = delete;
+
 	static void Reset(PerformanceElement elem);
 };
 
