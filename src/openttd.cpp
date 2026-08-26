@@ -496,7 +496,11 @@ static std::vector<OptionData> CreateOptions()
 int openttd_main(std::span<std::string_view> arguments)
 {
 	/* The main thread never goes through SetCurrentThreadName, so it names itself here.
-	 * Without this the busiest thread in a trace is the one without a label. */
+	 * This has no effect on the profiler: Tracy answers a name query for its main thread
+	 * with a hardcoded "Main thread" and never reads the name it was given. It is kept
+	 * because tracy::SetThreadName also sets the Windows thread description, and for this
+	 * thread nothing else does, so the name is still visible in a debugger and in crash
+	 * dumps. @see docs/tracy-integration-log.md */
 	OTTD_THREAD_NAME("ottd:main");
 
 	/* Startup runs until the main loop begins, so it cannot use the scoped section helper.
