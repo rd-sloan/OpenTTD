@@ -457,6 +457,8 @@ struct CYapfRoadAnyDepot : CYapfT<CYapfRoad_TypesT<CYapfRoadAnyDepot, CYapfDesti
 
 Trackdir YapfRoadVehicleChooseTrack(const RoadVehicle *v, TileIndex tile, DiagDirection enterdir, TrackdirBits trackdirs, bool &path_found, RoadVehPathCache &path_cache)
 {
+	OTTD_ZONE_C("YapfRoadVehicleChooseTrack", 0x729FCF);
+
 	Trackdir td_ret = CYapfRoad::stChooseRoadTrack(v, tile, enterdir, path_found, path_cache);
 
 	return (td_ret != Trackdir::Invalid) ? td_ret : trackdirs.GetNthSetBit(0).value();
@@ -464,6 +466,8 @@ Trackdir YapfRoadVehicleChooseTrack(const RoadVehicle *v, TileIndex tile, DiagDi
 
 FindDepotData YapfRoadVehicleFindNearestDepot(const RoadVehicle *v, int max_distance)
 {
+	OTTD_ZONE_C("YapfRoadVehicleFindNearestDepot", 0x729FCF);
+
 	TileIndex tile = v->tile;
 	Trackdir trackdir = v->GetVehicleTrackdir();
 

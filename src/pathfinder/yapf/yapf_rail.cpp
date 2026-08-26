@@ -596,6 +596,18 @@ struct CYapfAnySafeTileRailNo90 : CYapfRailBase<CYapfRail_TypesT<CYapfAnySafeTil
 
 Track YapfTrainChooseTrack(const Train *v, TileIndex tile, DiagDirection enterdir, TrackBits tracks, bool &path_found, bool reserve_track, PBSTileInfo *target, TileIndex *dest)
 {
+	/* Standard tier: these entry points are called per path request, not per search node, so
+	 * their volume is bounded by vehicle count. The internals are deliberately left
+	 * uninstrumented. Sampling an elevated Hilbergen session put the whole of YAPF at about
+	 * 0.33% of samples, the heaviest single symbol being CYapfCostRailT::PfCalcCost at 0.15%,
+	 * which does not justify per-node zones and the trace volume they would cost.
+	 *
+	 * That is a property of the fixture as much as of the code: 231 settled consists on
+	 * established routes rarely re-path. These zones are what will answer the same question
+	 * on wentbourne without another instrumentation pass.
+	 * @see docs/tracy-integration-log.md */
+	OTTD_ZONE_C("YapfTrainChooseTrack", 0x729FCF);
+
 	Trackdir td_ret = _settings_game.pf.forbid_90_deg
 		? CYapfRailNo90::stChooseRailTrack(v, tile, enterdir, tracks, path_found, reserve_track, target, dest)
 		: CYapfRail::stChooseRailTrack(v, tile, enterdir, tracks, path_found, reserve_track, target, dest);
@@ -605,6 +617,8 @@ Track YapfTrainChooseTrack(const Train *v, TileIndex tile, DiagDirection enterdi
 
 bool YapfTrainCheckReverse(const Train *v)
 {
+	OTTD_ZONE_C("YapfTrainCheckReverse", 0x729FCF);
+
 	const Train *moving_front = v->GetMovingFront();
 	const Train *moving_back = v->GetMovingBack();
 
@@ -669,6 +683,8 @@ bool YapfTrainCheckReverse(const Train *v)
 
 FindDepotData YapfTrainFindNearestDepot(const Train *v, int max_penalty)
 {
+	OTTD_ZONE_C("YapfTrainFindNearestDepot", 0x729FCF);
+
 	const Train *moving_back = v->GetMovingBack();
 
 	PBSTileInfo origin = FollowTrainReservation(v);
@@ -682,6 +698,8 @@ FindDepotData YapfTrainFindNearestDepot(const Train *v, int max_penalty)
 
 bool YapfTrainFindNearestSafeTile(const Train *v, TileIndex tile, Trackdir td, bool override_railtype)
 {
+	OTTD_ZONE_C("YapfTrainFindNearestSafeTile", 0x729FCF);
+
 	return _settings_game.pf.forbid_90_deg
 		? CYapfAnySafeTileRailNo90::stFindNearestSafeTile(v, tile, td, override_railtype)
 		: CYapfAnySafeTileRail::stFindNearestSafeTile(v, tile, td, override_railtype);
@@ -692,5 +710,9 @@ int CSegmentCostCacheBase::s_rail_change_counter = 0;
 
 void YapfNotifyTrackLayoutChange(TileIndex tile, Track track)
 {
+	/* Not pathfinding, but it invalidates the segment cost cache that the second heaviest
+	 * sampled symbol reads, so its rate is worth being able to see next to the searches. */
+	OTTD_ZONE_C("YapfNotifyTrackLayoutChange", 0x729FCF);
+
 	CSegmentCostCacheBase::NotifyTrackLayoutChange(tile, track);
 }

@@ -436,6 +436,8 @@ struct CYapfShip : CYapfT<CYapfShip_TypesT<CYapfShip>> {
 
 Track YapfShipChooseTrack(const Ship *v, TileIndex tile, bool &path_found, ShipPathCache &path_cache)
 {
+	OTTD_ZONE_C("YapfShipChooseTrack", 0x729FCF);
+
 	Trackdir best_origin_dir = Trackdir::Invalid;
 	const TrackdirBits origin_dirs = TrackdirToTrackdirBits(v->GetVehicleTrackdir());
 	const Trackdir td_ret = CYapfShip::ChooseShipTrack(v, tile, origin_dirs, {}, path_found, path_cache, best_origin_dir);
@@ -444,5 +446,7 @@ Track YapfShipChooseTrack(const Ship *v, TileIndex tile, bool &path_found, ShipP
 
 bool YapfShipCheckReverse(const Ship *v, Trackdir *trackdir)
 {
+	OTTD_ZONE_C("YapfShipCheckReverse", 0x729FCF);
+
 	return CYapfShip::CheckShipReverse(v, trackdir);
 }

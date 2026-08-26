@@ -810,6 +810,82 @@ are 1,782, 1,734, 1,775 and 1,735 against `build-release`'s 1,770, which is a ba
 2.7% with no trend. Standard-tier instrumentation remains free at this fixture's noise level
 even after four phases of additions.
 
+### 2026-08-26, phase T5: pathfinder entry points only
+
+Nine zones at the YAPF entry points, and nothing deeper. Files touched:
+`src/pathfinder/yapf/yapf_rail.cpp`, `yapf_road.cpp`, `yapf_ship.cpp`.
+
+#### Driven by sampling, which is what the plan asked for
+
+The plan says to sample first and instrument based on what the samples say, rather than
+guessing where pathfinder time goes. Sloan captured an elevated interactive Hilbergen session
+and read the sampling statistics. The whole of YAPF came to roughly **0.33% of samples**:
+
+| Symbol | Share of samples |
+| --- | --- |
+| `CYapfCostRailT<>::PfCalcCost` | 0.15% |
+| `CYapfSegmentCostCacheGlobalT<>::PfNodeCacheFetch` | 0.12% |
+| `CYapfBaseT<>::FindPath` | 0.04% |
+| `CYapfBaseT<>::AddNewNode` | 0.02% |
+
+**So the internals are deliberately left uninstrumented.** Per-node zones inside
+`follow_track.hpp` and the cost functions would carry the volume risk the plan flagged, in
+exchange for resolving a third of one percent. The entry points fire per path request, which
+is bounded by vehicle count, so they are standard tier and safe at any run length.
+
+This is the phase the plan was least specific about, and the sampling made the decision
+cheaply. Worth noting that the process worked: an hour of instrumentation was avoided by five
+minutes of looking.
+
+#### The result is a fixture property as much as a code property
+
+Hilbergen is 231 settled consists on established routes, and the captured zones show
+`YapfTrainChooseTrack` firing 0.51 times per tick, so a given consist re-paths roughly once
+every 450 ticks. Path caching is doing its job on a network that does not change.
+
+Wentbourne has 13,899 consists on a 1024x1024 map and would exercise this far harder. **These
+zones are the instrument that answers the same question there**, without another
+instrumentation pass. Do not read "YAPF is negligible" as a general conclusion; read it as
+"YAPF is negligible on Hilbergen, and here is how to check wentbourne".
+
+#### Gate results
+
+| Gate | Result |
+| --- | --- |
+| `openttd_test`, `build`, Debug | 98 cases, 2176 assertions, pass. |
+| `openttd_test`, `build-tracy` | 98 cases, 2176 assertions, pass. |
+| State fingerprint, Hilbergen, 20,000 ticks | **PASS**, `015ED3D109C5CCCC`. |
+| Zones reach a trace at safe volume | **Verified**, below. |
+
+From 2,000 headless Hilbergen ticks:
+
+| Zone | Count | Per tick | Mean | Share of captured time |
+| --- | --- | --- | --- | --- |
+| `YapfTrainChooseTrack` | 1,027 | 0.51 | 15.5 us | 0.99% |
+| `YapfTrainCheckReverse` | 86 | 0.04 | **22.9 us** | 0.12% |
+| `YapfTrainFindNearestDepot` | 65 | 0.03 | 5.3 us | 0.02% |
+| `YapfTrainFindNearestSafeTile` | 8 | 0.00 | 11.0 us | 0.01% |
+| `YapfNotifyTrackLayoutChange` | 1 | 0.00 | 0.3 us | 0.00% |
+
+1,187 pathfinder zones across 2,000 ticks, so **0.59 per tick**. The standard-tier decision is
+confirmed empirically rather than assumed: this is nothing next to the 6.4 zones per tick the
+rest of the standard tier already emits.
+
+The zone total of about 1.14% of captured time and the sampling's 0.33% are not the same
+measure. Zones cover wall time inside the call including children, sampling covers CPU
+self-time across the whole process. They agree that pathfinding is small, which is all that
+was being asked.
+
+#### One thing sampling could not have shown
+
+**`YapfTrainCheckReverse` is the most expensive pathfinder call on this fixture**, at 22.9 us
+mean against `YapfTrainChooseTrack`'s 15.5 us. Sampling ranked it nowhere, because it runs 12
+times less often, and share-of-samples flattens per-call cost into total cost.
+
+It is not an optimisation target at 0.12% of the trace. It is a good illustration of why the
+two instruments are both worth having: sampling finds where the time is, zones find what is
+expensive per call, and those are different questions with different answers.
+
 #### The T2 slowdown was noise
 
 The T2 entry recorded 1,734 ticks/s against T1's 1,782 and flagged it as inside the noise band
