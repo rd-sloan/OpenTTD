@@ -704,6 +704,9 @@ Needs an interactive elevated session, threaded, with the profiler attached. Exp
 input, `UpdateWindows` and `PopulateSystemSprites`. Running once with `-v win32:no_threads`
 gives a control: that trace should show no contention at all.
 
+**Confirmed the same day.** Sloan ran an interactive session and observed both the lock
+contention and the five plots. T3 is verified in full and nothing in it remains on trust.
+
 #### The T2 slowdown was noise
 
 The T2 entry recorded 1,734 ticks/s against T1's 1,782 and flagged it as inside the noise band
