@@ -368,3 +368,27 @@ Guidance given in conversation said to expect sampled call stacks in an interact
 sign the connection was live. That was wrong, because it omitted the elevation requirement.
 An unelevated connection is fully live and simply has no samples in it. Use the frame counter
 or a section to confirm a connection instead.
+
+### 2026-08-26, T1 fully verified
+
+Sloan reran the interactive capture elevated. Sampled call stacks appear, and so do named
+thread rows: `ottd:game`, several concurrent `ottd:linkgraph` threads, and others.
+
+**T1 is now verified in full.** Every item is confirmed: both frame sets, the `LoadSavegame`
+and `LoadCheck` sections, and thread naming. Nothing in the phase remains on trust.
+
+This also confirms the diagnosis in the previous entry rather than merely being consistent
+with it. The same build produced no thread rows unelevated and named rows elevated, with no
+code change in between, which is what the two mechanisms predicted: elevation enables the
+thread-attributed sampling data, and the names then resolve against it.
+
+One incidental finding worth carrying into T3. Hilbergen runs **several `ottd:linkgraph`
+threads concurrently**, which was not obvious from the code and is more than one job at a
+time. The plan's `linkgraph.jobs_running` plot is therefore measuring something real on this
+fixture, and `GameLoopLinkGraph`, which times the main thread waiting for those jobs, is worth
+reading against the thread rows rather than on its own.
+
+Verified via `SetCurrentThreadName`, which is the path every worker takes. The main thread is
+named by a separate explicit call in `openttd_main`, so `ottd:main` specifically was not
+called out in the report; it is expected among the rows and uses the same macro, but treat it
+as inferred rather than observed until someone confirms the label.
