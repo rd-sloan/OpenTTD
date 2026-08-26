@@ -309,3 +309,62 @@ These need a person with `tracy-profiler.exe`. Open the sample capture above for
 sets and sections, and attach to an interactive session for thread names. Deferred rather than
 dropped, and carried into T3, which is the first phase that genuinely cannot be validated any
 other way.
+
+### 2026-08-26, T1 interactive results, and two things about capture on Windows
+
+Sloan attached the profiler to an interactive session, loaded Hilbergen and let it run about a
+minute. Results below, plus the two findings they turned up.
+
+**Confirmed.** The `GameTick` named frame set, the default frame set, and the `LoadSavegame`
+and `LoadCheck` sections all appear. That closes three of the four T1 items that could not be
+checked headlessly.
+
+**Not seen.** No thread names, and no sampled call stacks. Neither is a fault in the
+instrumentation, and they have separate causes.
+
+#### Windows sampling needs Administrator, silently
+
+`SysTraceStart` in Tracy's `client/TracySysTrace.cpp:189` calls `etw::CheckAdminPrivilege()`
+and returns false immediately if it fails. Everything after that point in the function is
+skipped, so an unelevated process gets **no sampled call stacks, no context switch capture and
+no vsync capture**, with no error and nothing in the trace to say why.
+
+This is a Tracy platform requirement on Windows, not a consequence of anything in this
+integration, and it is not affected by `TRACY_ON_DEMAND` or by any option set in
+`CMakeLists.txt`. `TRACY_NO_SAMPLING` is off, so sampling is compiled in; it is refused at
+runtime.
+
+**Run the game elevated for any capture where sampling matters.** That includes the T5
+pathfinder work, where the plan explicitly leans on sampling to find where YAPF time goes
+before instrumenting it, and any capture meant to cover code nobody has instrumented.
+Elevation is not needed for zones, frames, plots, sections or messages, so ordinary
+zone-hunting captures do not require it.
+
+#### Thread names only appear once a thread has events
+
+Worth writing down because the mechanism is not obvious and it will come up again.
+`tracy::SetThreadName` sends nothing when called. It pushes a `ThreadNameData` record onto a
+process-global atomic linked list keyed by thread id, in the `TRACY_ENABLE` block at the end
+of `common/TracySystem.cpp`. The profiler resolves a name by id only when that thread already
+appears in the event stream.
+
+So a thread that never emits a thread-attributed event never appears in the trace, and its
+name is therefore never transmitted. Frame marks do not qualify: they belong to a frame set
+rather than to a thread, which is exactly why T1 produces frames and no thread rows.
+
+The two findings compound. Context switch records are thread-attributed, so with elevation the
+sampling data alone would have produced named thread rows even with zero zones. Unelevated and
+zone-free, there is genuinely nothing to hang a thread row on.
+
+**Thread naming therefore remains unverified**, and there are two ways to close it. Reconnect
+to an elevated session, where `ottd:main` and `ottd:game` should appear as named rows carrying
+samples and no zones. Or wait for T2, where the `PerformanceElement` bridge puts zones on both
+threads and the rows appear regardless of elevation. If the names show as raw thread ids under
+either route, `OTTD_THREAD_NAME` is broken and needs investigating.
+
+#### Correction
+
+Guidance given in conversation said to expect sampled call stacks in an interactive trace as a
+sign the connection was live. That was wrong, because it omitted the elevation requirement.
+An unelevated connection is fully live and simply has no samples in it. Use the frame counter
+or a section to confirm a connection instead.
