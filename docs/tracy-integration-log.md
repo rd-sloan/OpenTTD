@@ -1300,3 +1300,56 @@ The 3.04% allocation figure is MSVC-specific and should not be quoted for a GCC 
 
 And the whole page is measurement, not a change. Findings 1 and 2 look like clean wins and
 finding 3 looks like a trap, but nothing here has been prototyped, built or fingerprinted.
+
+### 2026-08-28: memory tracking planned, in a new document
+
+`docs/tracy-memory-plan.md`. Sloan asked for a plan rather than an implementation, so nothing is
+built yet.
+
+It exists as its own file rather than as an entry here because it is a plan and this is a log,
+and because ground rule 2 forbids editing `docs/tracy-integration-plan.md`, whose section 9 is
+the three-paragraph placeholder it replaces. The new document says so at the top. Same
+precedence rule as before: where the frozen plan and the new one disagree about memory, the new
+one wins, and where this log and the new plan disagree about what actually happened, the log
+wins.
+
+Four things came out of the research that changed the shape of the plan, all worth having here
+in case the plan file drifts:
+
+**`TracyAlloc` captures no call stacks.** `TRACY_CALLSTACK` defaults to 0 (`Tracy.hpp:139`) and
+`MemAllocCallstack` with depth 0 falls through to plain `MemAlloc`. So the allocation hot-spot
+tree, which is the main reason to want this, is empty unless the `S`-suffixed macros are used
+with an explicit depth. That splits the work into a cheap tier and an expensive one and is why
+the plan has three tiers rather than two.
+
+**An unbalanced free terminates the capture.** Not a warning. Tracy drops the connection and the
+trace ends. That makes a global `operator new` override the riskiest single change in the plan,
+because getting half of a new/delete pair overridden is exactly the failure. `TRACY_ON_DEMAND`,
+already forced on at `CMakeLists.txt:311`, relaxes the case where the allocation predates the
+connection, which is the only reason this is workable at all.
+
+**Leak detection conflicts with a decision already taken.** The active-allocations-at-exit list
+needs the tail of the capture, and `TRACY_NO_EXIT` is deliberately off (`CMakeLists.txt:318`)
+because it hangs the game at exit with no profiler attached. So the leak list is unreliable in
+every tree we have. A leak run needs its own scratch build.
+
+**Memory events carry callstack indices where zones do not.** `get_memory_events` returns a
+`callstack_idx` per allocation and `get_callstack_frames` resolves it. That is the same
+capability the pathfinder dig went looking for and did not find, since our zones use
+`ZoneScopedN` rather than `ZoneScopedNS`. Memory tracking is where the bindings' callstack access
+finally becomes useful, which is an argument for going as far as the callstack tier rather than
+stopping at the cheap one.
+
+Also recorded there, because it is a trap: only `CargoPacket` sets `Tcache`, so markers in
+`Pool::AllocateItem` and `FreeItem` measure slot occupancy rather than heap traffic for that one
+pool, and the pool figures are a second independent accounting of bytes the default pool already
+counted. Those numbers must never be added together.
+
+Phase M0 is counters only, no Tracy events, because allocation volume is unmeasured and every
+tier decision downstream depends on it. The estimate in the plan, 6,000 to 12,000 allocations
+per tick from road pathfinding alone, divides a sampled time by a guessed cost per `malloc` and
+should not be treated as a measurement.
+
+No code, no build, no capture. `openttd_test` in `build` still passes at 2176 assertions in 98
+test cases, which for a documentation change proves only that the tree was clean when this was
+written.
