@@ -852,3 +852,147 @@ with 26.6 million memory events and no termination, `Drawing`, `ViewportDrawing`
 `Sound` all fire, 8,346 lock events, and the M0 plots and M1 pools are all present alongside the
 default pool. Items 1 to 3, the framerate comparison, the two connect and disconnect cycles and
 the clean exit, leave no trace evidence and are Sloan's report.
+
+### 2026-08-28, phase M3: allocation call stacks
+
+The last phase in the plan. Every allocation now carries a stack, which is what turns M2's
+thirteen million anonymous events into an answer.
+
+#### What was built
+
+`OPTION_TRACY_MEM_CALLSTACK`, requiring `OPTION_TRACY_MEM_GLOBAL`, with the same
+`FATAL_ERROR` guard and the same per-file define mechanism M2 uses, so switching it still
+rebuilds one translation unit. `REPORT_ALLOC` becomes `TracyAllocS` at depth 16.
+
+**Stacks on allocation only.** `REPORT_FREE` stays on plain `TracyFree`. A free's stack says
+where memory was released; the hot-spot tree is built from where it was requested, and capturing
+both would double the most expensive thing in the file for something nothing here asks about.
+Tracy accepts the mixture, since a callstack-carrying allocation and a plain free are independent
+event types. The plan said "the `S` forms everywhere" and this is narrower on purpose.
+
+**The named pools keep plain markers too.** A stack on a `Pool::AllocateItem` allocation would
+say which code created the vehicle, which is mildly interesting and not what M1 is for. The
+pools already know exactly where they came from.
+
+#### Depth 16 is generous, not tight
+
+The plan guessed 16 and said to check rather than trust it. Checked: **16 return addresses
+resolve to 26 frames**, because inline expansion happens at symbol resolution rather than
+capture, and they reach all the way from the allocation to `WinMain` and `BaseThreadInitThunk`.
+Nothing is truncated.
+
+Four of those frames are overhead that no analysis wants: `tracy::Callstack`,
+`tracy::Profiler::MemAllocCallstack`, and this file's own `CountedAlloc` and `operator new`. So
+the useful depth is nearer twelve, and it was still enough to reach past the pathfinder entry
+points into `GameLoop` itself.
+
+Symbol resolution gives file and line for our code and for the standard library, so a stack reads
+`NodeList<CYapfRoadNode,8,10>::CreateNewNode` at `nodelist.hpp:70` rather than an address.
+
+#### The answer
+
+wentbourne, 30 ticks, allocations made inside the game loop, attributed to the nearest
+recognisable subsystem entry in each stack. 1,668,441 allocations across 1,171 distinct stacks:
+
+| Attributed to | allocations | share | bytes |
+| --- | --- | --- | --- |
+| `YapfRoadVehicleChooseTrack` | 1,250,835 | **75.0%** | 108,314,438 |
+| `YapfShipChooseTrack` | 218,025 | 13.1% | 30,195,487 |
+| `YapfRoadVehicleFindNearestDepot` | 42,146 | 2.5% | 6,435,383 |
+| `FormatString` | 21,050 | 1.3% | 842,000 |
+| `YapfShipCheckReverse` | 19,560 | 1.2% | 1,894,014 |
+| `YapfTrainChooseTrack` | 14,528 | 0.9% | 4,833,217 |
+| `YapfShipRegions` | 12,325 | 0.7% | 18,728,546 |
+| `StationFinder::{ctor}` | 7,175 | 0.4% | 287,000 |
+| **all YAPF entry points** | **1,563,747** | **93.7%** | |
+
+**Ninety-four percent of what the game loop allocates is the pathfinder**, and the single hottest
+stack, 73.7% of everything on its own, is:
+
+```
+NodeList<CYapfRoadNode,8,10>::CreateNewNode
+  std::deque<CYapfRoadNode>::emplace_back
+    std::deque<CYapfRoadNode>::_Emplace_back_internal
+      std::allocator<CYapfRoadNode>::allocate
+```
+
+That is the finding from the pathfinder dig, arrived at a fourth time by a fourth method. The dig
+inferred it from MSVC's `deque` source and sampled time inside the allocator; M2 confirmed the
+48-byte size signature; M3 names the call stack.
+
+#### Two smaller things worth a look
+
+`YapfShipRegions` allocates 12,325 times for 18.7 MB, so **1,519 bytes per allocation** against
+the 86-byte average everywhere else. It is 0.7% of the count and 10.5% of the bytes. Ship region
+pathfinding allocates in large blocks and nothing has ever looked at it.
+
+`StationFinder`'s constructor builds a `std::set<Station *>` and it is called from
+`TileLoop_Town`, so there is a tree allocation per town tile loop iteration. Only 0.4%, but it is
+the kind of thing that is trivially avoidable and would never have been found any other way.
+
+`FormatString` and the Uniscribe text shaping entries together come to about 3.5% in a **headless
+run with the null driver**. Not investigated. Worth knowing that string formatting and text
+layout allocate during ticks at all.
+
+#### The share question the earlier phases left open
+
+Three methods have now estimated road pathfinding's share of allocations and they do not agree:
+
+| Method | window | road `ChooseTrack` share |
+| --- | --- | --- |
+| M0 regression on per-tick counts | 1,900 ticks | about 50% |
+| M2 size and zone attribution | 7 ticks | 78.2% |
+| M3 call stacks | 30 ticks | 75.0% |
+
+The disagreement is not a contradiction, it is the sampling. M2 and M3 both use short windows
+early in the run where road pathfinding is unusually busy, and M0's regression covers 1,900 ticks
+including quiet ones. The M0 figure is the one to quote for a whole run.
+
+What M3 settles is the part that was actually in doubt: **where** the allocations come from.
+That is now a call stack rather than an inference, and no window choice changes it.
+
+#### Cost
+
+| Tree | wentbourne, 30 ticks | vs baseline |
+| --- | --- | --- |
+| `build-tracy`, no memory tracking | 2,414.2 ms | |
+| `build-tracy-mem`, M3 | 5,142.9 ms | **+113%** |
+
+The callstack tier slightly more than doubles the game loop, against M2's +25.6%, so the stack
+walk alone is worth about 1.7x on top of the events. Two runs two minutes apart.
+
+Two operational limits matter more than the percentage:
+
+- **64.22 MB for 30 ticks**, or 2.14 MB per tick, against M2's 364 KB. Callstacks multiply the
+  trace by six.
+- **The client outruns the transport.** `tracy-capture` reported 23.7 seconds elapsed to drain an
+  8.02 second span, so the capture takes roughly three times the wall clock of the run itself.
+  Budget for that, and do not read the extra time as the game being slow.
+
+Thirty ticks is the right size for this tier. A hundred would be 214 MB and several minutes of
+draining for nothing the thirty did not already say.
+
+#### Gates
+
+| Gate | Result |
+| --- | --- |
+| `openttd_test`, `build` with the options off | **PASS**, 2176 assertions in 98 test cases |
+| `openttd_test`, `build-tracy-mem` with callstacks on | **PASS**, 2176 assertions in 98 test cases |
+| Configure guard, `OPTION_TRACY_MEM_CALLSTACK` alone | **PASS**, configure refuses |
+| State fingerprint, wentbourne, 30 ticks | **PASS**, `31B1257FC65D1424`, identical to `build-tracy` |
+| Capture survives a full run | **PASS**, 4,512,746 allocations, every one with a stack |
+| Interactive run | **NOT RUN.** Outstanding. |
+
+#### The plan is complete
+
+M0 through M3 are built, gated and recorded. What the plan listed as deferred stays deferred, and
+one thing has been added to it:
+
+1. **Replacing the YAPF node `deque` with a chunked arena.** This is now the obvious change and
+   four independent measurements point at it. It is a fix, not instrumentation, and belongs in
+   its own change with its own fingerprint run.
+2. **`YapfShipRegions`' 1,519-byte allocations** and `StationFinder`'s per-tile-loop `std::set`,
+   both new here.
+3. **Promoting M1's named pools to the standard tier**, still a decision rather than a
+   measurement. M2 and M3 have now shaken the pairing out across four captures without a single
+   unmatched event, so the argument for keeping them gated is weaker than it was.
