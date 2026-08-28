@@ -166,7 +166,7 @@ at no meaningful cost.
 | Configure guard, `OPTION_TRACY_MEM` without `OPTION_TRACY` | **PASS**, configure refuses with the FATAL_ERROR |
 | State fingerprint, Hilbergen, 20,000 ticks | **PASS**, `015ED3D109C5CCCC`, the recorded baseline |
 | State fingerprint, wentbourne, 2,000 ticks | **PASS**, `497945F2C42DED8F`, identical in `build-tracy` and `build-tracy-mem` |
-| Interactive run in `build-tracy-mem` | **NOT RUN.** Needs a human at the keyboard. |
+| Interactive run in `build-tracy-mem`, threaded and unthreaded | **PASS.** Run by Sloan; see the follow-up entry below. |
 
 The unit suite passing in `build-tracy-mem` is worth more here than it usually is. Catch2
 allocates heavily during test registration, before `main`, which is exactly where a replaced
@@ -177,10 +177,10 @@ gate arrives with M2.
 The wentbourne fingerprint is a second-fixture check the integration log never recorded. Worth
 keeping: `497945F2C42DED8F` at 2,000 ticks from `wentbourne.sav`.
 
-**The interactive gate is outstanding and matters more for this phase than for most.** The
-override changes every allocation in the process, including the draw thread, the GUI and the
-sound mixer, and the headless null driver runs none of those. Someone has to launch
-`build-tracy-mem`, play for a minute, connect and disconnect the profiler, and exit cleanly.
+**The interactive gate mattered more for this phase than for most**, because the override
+changes every allocation in the process, including the draw thread, the GUI and the sound mixer,
+and the headless null driver runs none of those. It has since been run and it passed; the entry
+below has the numbers.
 
 #### One red herring that cost about forty minutes
 
@@ -228,3 +228,80 @@ standard tier plus the M0 plots, integrity guard gap zero on each. Reports under
    trace size expectation, and which fixture answers which question.
 3. The `mem.live_blocks` climb on Hilbergen is unexplained. It is not urgent and it is not a leak
    in the obvious sense, since the plateau on wentbourne shows the counters behave.
+
+### 2026-08-28, M0 interactive gate: passed, and it corrects one of my claims
+
+Sloan ran the gate in `build-tracy-mem` and reported all four items green, threaded and
+unthreaded. Two traces were saved, so most of it can be checked rather than taken on trust:
+
+| Trace | Mode |
+| --- | --- |
+| `benchmark/manual-traces/m0-manual-wentbourne.tracy` | threaded, the default |
+| `benchmark/manual-traces/m0-manual-wentbourne-single-thread.tracy` | `-v win32:no_threads` |
+
+**What the traces confirm directly.**
+
+Threading really was off in the second one. The threaded trace has three threads, `ottd:game`
+with 31,624 zones, `Main thread` with 15,059, and an unnamed sound thread with 724. The
+unthreaded trace has two, `Main thread` with 73,758 and the sound thread with 1,103, and no
+`ottd:game` at all.
+
+Both traces exercise the ground the headless gate structurally cannot. `Drawing`,
+`ViewportDrawing`, `Video` and `Sound` all fire, and there are 3,401 and 3,750 lock events
+respectively where a null-driver capture has none.
+
+**Gate item 4 is confirmed: all three M0 plots are present in both traces**, with one point per
+game loop iteration, 284 in the threaded trace and 417 in the unthreaded one. That was the item
+worth checking, because a plot that compiles but never fires is invisible to every other gate.
+
+A nice incidental confirmation of the T3 work: the unthreaded trace records 3,750 lock events and
+`get_lock_wait_stats()` returns an empty list, so lock activity with zero contention. That is
+exactly what the T3 entry said an unthreaded run should look like, and it had never been checked
+from the bindings side.
+
+**What I did not verify.** Items 1 to 3 are Sloan's report, not mine. The framerate comparison
+against `build-release`, the two connect and disconnect cycles inside one session, and the clean
+exit with no profiler attached leave no trace evidence I can read. Two saved traces do prove at
+least two clean connect-and-disconnect cycles across sessions.
+
+#### The correction
+
+`ScopedProfilerMemoryTick` carries a comment, repeated in the M0 entry above, warning that the
+counters are process-wide so a threaded interactive run's per-tick delta includes whatever the
+draw thread managed between the two samples, and that the figure is exact only for the null
+driver. **The warning is technically true and practically negligible.**
+
+| Mode | allocations per tick, mean | min | max |
+| --- | --- | --- | --- |
+| headless, null driver, 2,000 ticks | 31,416 | 13,018 | 167,098 |
+| interactive, threaded, 284 ticks | 30,869 | 15,642 | 51,498 |
+| interactive, unthreaded, 417 ticks | 31,080 | 13,845 | 104,605 |
+
+All three sit within 1.7% of each other, and the interactive figures are slightly **lower** than
+headless rather than higher, which is the opposite of what I predicted.
+
+The reason is the threading design rather than luck. The draw thread holds `game_state_mutex`
+while it draws and the game thread waits on it, so during the game loop body the draw thread is
+mostly blocked and not allocating. There is little for it to contaminate the delta with.
+
+The wider point is more useful than the correction: allocation volume is essentially the same
+whether or not the process is rendering, so it is the simulation that allocates, not the GUI.
+That makes the M2 volume budget in the entry above safe to rely on for interactive captures too,
+which I had left open.
+
+The maxima differ for a boring reason. The headless 167,098 and the unthreaded 104,605 are
+savegame load settling, which both captures happened to include; the threaded capture was
+connected mid-session and its `mem.live_blocks` starts at 736,748 already on the plateau, against
+495,659 rising in the unthreaded one.
+
+#### Two smaller things worth keeping
+
+Per-tick game loop cost, for anyone comparing later: 56.1 ms threaded and 55.8 ms unthreaded
+against 52.3 ms headless, so interactive is about 7% slower per tick because drawing competes for
+the same core. Not a memory-tracking cost.
+
+The integrity guard returns a gap of 0 on the unthreaded trace and **2** on the threaded one.
+That is two zones left open when the profiler disconnected mid-session, not a name collision, and
+it is the same signature `docs/tracy-mcp.md` already records for a capture that ends inside live
+zones. A gap equal to the number of threads with an open zone at disconnect is expected; a gap in
+the thousands is the defect that note is really about.
