@@ -1083,3 +1083,220 @@ T5's summary should be read as "pathfinding is negligible on Hilbergen", not "pa
 negligible". Any future statement about a cost being negligible needs the fixture named in the
 same sentence. Hilbergen loads with zero road, ship and aircraft consists, so it cannot answer
 questions about three of the four vehicle types.
+
+### 2026-08-28: where road vehicle pathfinding actually spends its time
+
+The entry above sized road pathfinding at 12.79% of `GameLoop` on wentbourne and stopped there.
+This is the breakdown inside it, from `t5-wentbourne.tracy` (2,180 ticks, standard tier,
+elevated, integrity guard gap zero). Three separate costs came out of it, and one of them is
+not really about pathfinding at all.
+
+#### Method, and two things that nearly went wrong
+
+Sampling is the only way in, because our zones do not capture call stacks.
+`get_zone_callstacks("YapfRoadVehicleChooseTrack")` returns an empty list. That is not a
+bindings defect. `src/profiling.h` builds on `ZoneScopedN`, not the call-stack-capturing
+`ZoneScopedNS`, which is the right choice for a zone on a hot path. It does mean that per-zone
+callstack attribution, which `docs/tracy-mcp.md` lists as a reason to have the bindings, is
+unavailable for every capture we have taken.
+
+So the tree below is built from `get_symbol_stats()` inclusive counts. That is sound here
+because the YAPF classes are templates and every symbol in the road path is its own
+instantiation, `CYapfBaseT<CYapfRoad_TypesT<CYapfRoad,CYapfDestinationTileRoadT> >` and so on.
+The depot search instantiates `CYapfRoadAnyDepot` separately, so the two do not mix. Only
+`CFollowTrackT<1,RoadVehicle,1,0>` and the tile helpers are shared, and those are called out.
+
+**Samples convert to time on this capture.** Dividing the `YapfRoadVehicleChooseTrack` zone
+total by its inclusive sample count gives 126,528.9 ns per sample, which is 7.90 kHz, and Tracy
+samples at 8 kHz. Two independent measurements of the same subtree agreeing to 1.3% is the
+licence to quote microseconds per call off sample counts. Do this check per capture rather than
+assuming the rate.
+
+**`get_symbol_stats()` returns one row per address, and inlined copies share a name.** Keying a
+dict by name loses samples the way `get_all_zone_stats()` does, and it is not documented as a
+hazard because here the rows are all present and it is the reader who drops them. My first table
+had `HeapifyDown` at 4,537 self samples from one row when the three rows sum to 7,549, and
+`PopOpenNode` at 1,303 inclusive against a true 11,510. Sum by name, always.
+
+#### The distribution, which is the first surprise
+
+| Percentile | Road ChooseTrack | Train ChooseTrack | Road FindNearestDepot |
+| --- | --- | --- | --- |
+| p50 | 42.2 us | 13.6 us | 46.9 us |
+| p75 | 194.8 us | 26.4 us | 60.7 us |
+| p90 | 503.3 us | 51.9 us | 72.1 us |
+| p99 | 1,281.5 us | 181.6 us | 99.3 us |
+| max | 3,479.9 us | 1,054.9 us | 1,932.3 us |
+| mean | 165.6 us | 24.2 us | 45.1 us |
+| slowest 10% holds | 50.6% of total | 44.0% | 19.2% |
+
+The road median is 42 us, a quarter of the mean. The 165.6 us figure quoted in the entry above
+is not a typical search, it is a median search plus a fat tail, and half the total time sits in
+the slowest tenth of calls. The slowest 1% only holds 9.9%, so this is not a handful of
+pathological searches that could be clamped. The whole upper half of the distribution is
+expensive.
+
+The depot search is the opposite shape, tightly clustered between 47 and 72 us. That is the
+signature of a search that almost always runs to its cost budget rather than finding anything.
+
+#### The breakdown, per call of the 165.6 us mean
+
+| | incl samples | % of entry | us/call | self |
+| --- | --- | --- | --- | --- |
+| `YapfRoadVehicleChooseTrack` | 74,401 | 100% | 165.6 | 3 |
+| `FindPath` | 71,063 | 95.5% | 158.2 | 760 |
+| ..`PfFollowNode` | 59,249 | 79.6% | 131.9 | 29 |
+| ....`AddMultipleNodes` | 56,257 | 75.6% | 125.2 | 143 |
+| ......`AddNewNode` | 43,687 | 58.7% | 97.2 | 2,091 |
+| ........`PfCalcCost` | 31,781 | 42.7% | 70.7 | 1,809 |
+| ..........`SlopeCost` | 8,626 | 11.6% | 19.2 | 447 |
+| ........`CreateNewNode` to `deque::_Emplace_back_internal` | 11,578 | 15.6% | 25.8 | 491 |
+| ........`InsertOpenNode` | 2,772 | 3.7% | 6.2 | 923 |
+| ....`CFollowTrackT<1,RoadVehicle,1,0>::Follow` | 17,771 | 23.9% | 39.6 | 1,100 |
+| ..`PopOpenNode` | 11,510 | 15.5% | 25.6 | 366 |
+| ....`CBinaryHeapT::HeapifyDown` | 7,549 | 10.1% | 16.8 | 5,130 |
+| ..`HashTable` open and closed `Find` | 5,514 | 7.4% | 10.2 | 578 |
+| ....`HashTableSlot::Find` | 5,082 | 6.8% | 11.3 | 3,445 |
+| ..`deque` destructor and `_Tidy` | 2,900 | 3.9% | 6.5 | 5 |
+
+`Follow` is indented under `PfFollowNode` for readability but it is called from two places, once
+per followed node and again per tile inside `PfCalcCost`'s segment walk. Subtracting the other
+children puts roughly 15,000 of its 17,771 samples inside `PfCalcCost`. So segment cost
+evaluation, counting the track following it drives, is about 105 us of the 165.6 us.
+
+### Finding 1: on MSVC every pathfinder node is its own heap allocation
+
+`NodeList` stores nodes in `std::deque<Titem> items` (`nodelist.hpp:27`). The code holds `Node *`
+into that storage across insertions, so a growing `vector` is genuinely not an option and the
+`deque` is a reasonable-looking choice. On MSVC it is not.
+
+From `VC/Tools/MSVC/14.44.35207/include/deque:550`:
+
+```cpp
+static constexpr int _Block_size = _Bytes <= 1 ? 16
+                                 : _Bytes <= 2 ? 8
+                                 : _Bytes <= 4 ? 4
+                                 : _Bytes <= 8 ? 2
+                                               : 1; // elements per block (a power of 2)
+```
+
+Any element over 8 bytes gets one element per block, which is one heap allocation per element.
+`CYapfRoadNode` is about 48 bytes by layout: an 8-byte key, `hash_next` and `parent`, two ints,
+`is_choice`, then `segment_last_tile` and `segment_last_td`. So every node A* touches is a
+separate `malloc`, and the `deque` destructor frees them one at a time when the search ends.
+
+The samples say so plainly. The whole `deque<CYapfRoadNode>` subtree is 20,383 inclusive samples
+with 613 of self time, so 97% of it is inside the allocator. `RtlAllocateHeap` is 34,046
+inclusive samples across the entire capture and `RtlFreeHeap` is 12,933 of self.
+
+| Node type | deque subtree samples | seconds | % of `GameLoop` |
+| --- | --- | --- | --- |
+| `CYapfRoadNode` | 20,383 | 2.58 | 2.51% |
+| `CYapfShipNode` | 2,741 | 0.35 | 0.34% |
+| `CYapfRailNode` | 1,562 | 0.20 | 0.19% |
+| **Total** | **24,686** | **3.12** | **3.04%** |
+
+Three percent of the simulation on wentbourne is `malloc` and `free` for pathfinder nodes, and
+it is 19.5% of road `ChooseTrack` specifically. This is the most attractive item on the list: a
+chunked arena keeps the pointer stability the algorithm needs, the node contents are trivially
+destructible so teardown becomes dropping a bump pointer, and the storage can survive across
+searches instead of being rebuilt each time. It changes no cost, no ordering and no result, so
+it is the rare pathfinder change a state fingerprint can fully validate.
+
+It also hits rail and ship, and it is a libstdc++ and libc++ question separately. Both use a
+512-byte minimum block, so they were already batching about ten nodes per allocation. This is
+substantially an MSVC problem, which is worth saying out loud before anyone treats the 3% as a
+universal figure.
+
+### Finding 2: `SlopeCost` computes every tile height twice
+
+`CYapfCostRoadT::SlopeCost` (`yapf_road.cpp:36`) takes `tile` and `next_tile` and calls
+`GetSlopePixelZ` on the centre of each. `PfCalcCost`'s segment walk then does this:
+
+```cpp
+segment_cost += Yapf().SlopeCost(tile, follower_local.new_tile, trackdir);
+...
+tile = follower_local.new_tile;
+```
+
+Next iteration's `z1` is the height of the tile just measured as `z2`. Every interior tile of
+every segment is measured twice, and the second measurement is guaranteed to produce the number
+the first one already had.
+
+`SlopeCost` is 19.2 us of the 165.6 us in `ChooseTrack` and 5.3 us of the 45.1 us in the depot
+search, so 9,784 samples or 1.24 seconds, 1.2% of `GameLoop`. `GetTileSlopeZ` shows 9,328
+inclusive samples across the whole capture, which within sampling noise means the road pathfinder
+is essentially its only caller. Carrying the previous `z` forward halves it.
+
+Smaller than finding 1 and less interesting, but it is provably result-identical, confined to one
+function, and worth about 0.6% of `GameLoop` on this fixture.
+
+### Finding 3: road has no segment cost cache, and probably cannot have one
+
+Rail runs `CYapfSegmentCostCacheGlobalT` and `CSegmentCostCacheT::Get`. Road runs the `None`
+variant, so `PfNodeCacheFetch` always returns false and `AddNewNode` calls `PfCalcCost`
+unconditionally. That is most of the 7x gap in per-call cost, and it also explains the 9x gap in
+the depot searches, 45.1 us for road against 4.92 us for trains.
+
+Before proposing a cache, note why there is not one. Road segment cost depends on the vehicle and
+on live state, not only on the geometry. `OneTileCost` reads `entry.GetOccupied()` and
+`rs->IsFreeBay()`, and the segment walk penalises speed limits against `v->GetDisplayMaxSpeed()`
+and `v->current_order.GetMaxSpeed()`. A cache keyed on the segment alone would return wrong
+costs, and wrong costs on a shared cache is a desync class of bug, not a performance regression.
+I would leave this alone.
+
+There is a cheaper variant of the same idea, though. `AddNewNode` calls `PfCalcCost` **before**
+it checks the open and closed lists, so a child node whose key is already closed pays a full
+segment walk and is then discarded. The key is set by `n.Set(...)` before the cost call, so the
+closed-list lookup could come first. That is not free of consequence: the current code treats a
+closed node that turns out cheaper as a bug in the cost or estimate function, and reordering
+makes that case silently unreachable rather than asserted. Measure it before deciding.
+
+### The separate finding: `RunEconomyVehicleDayProc` is 71% road depot searches
+
+Not part of the pathfinder question, and it fell out of `get_child_zone_stats`:
+
+| Child | Calls | Total | Share of parent |
+| --- | --- | --- | --- |
+| `YapfRoadVehicleFindNearestDepot` | 27,404 | 1,236.6 ms | 70.8% |
+| `YapfTrainFindNearestDepot` | 12,414 | 61.1 ms | 3.5% |
+
+`RunEconomyVehicleDayProc` is 1,746.6 ms over 2,180 ticks and road-vehicle depot searches are
+nearly three quarters of it. They come from `CheckIfRoadVehNeedsService`
+(`roadveh_cmd.cpp:1686`), gated on `NeedsAutomaticServicing()`, bounded by
+`maximum_go_to_depot_penalty`, and the result is thrown away when `best_length` exceeds that
+penalty.
+
+The tight 47 to 72 us distribution says these searches are nearly all running the budget out.
+That fits wentbourne having road vehicles with no depot in range: the search cannot terminate
+early on success because there is no success, so it expands the full radius and returns nothing.
+A vehicle in that state repeats the search on its next day proc, and the answer is stable while
+the vehicle is where it was.
+
+I have not measured the failure rate, so this is a hypothesis with a distribution shape behind it
+rather than a result. It is also the cheapest thing on this page to test.
+
+### What to measure next, in order
+
+1. **Nodes per search, per transport type.** Every estimate above is per call, and per node is
+   what the algorithm is actually sensitive to. `nodes.TotalCount()` and `ClosedCount()` at the
+   end of `FindPath` as a plot, detail tier. This also answers whether road searches hit
+   `max_search_nodes` (default 10,000) and how often.
+2. **The depot search failure rate.** A counter on `best_length == UINT_MAX` against total calls.
+   One plot, and it decides whether a negative-result cache is worth anything.
+3. **Closed-list hits inside `AddNewNode`.** How much of `PfCalcCost` is computed and discarded.
+
+All three are counters and plots rather than new zones, so they cost close to nothing on the hot
+path.
+
+### What this does not say
+
+Wentbourne only. Hilbergen loads with zero road consists and called
+`YapfRoadVehicleChooseTrack` ten times in an entire capture, so it has nothing to say about any
+of this. Following the standing correction from the previous entry, every number here is a
+wentbourne number.
+
+The 3.04% allocation figure is MSVC-specific and should not be quoted for a GCC or Clang build.
+
+And the whole page is measurement, not a change. Findings 1 and 2 look like clean wins and
+finding 3 looks like a trap, but nothing here has been prototyped, built or fingerprinted.

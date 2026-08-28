@@ -153,6 +153,25 @@ For simulation questions the cleanest input is a headless capture at standard ti
 elevated shell: no rendering in the profile, sampling still on, and none of the detail tier's
 observer effect.
 
+**Sum symbol stats by name.** `get_symbol_stats()` returns one row per address, and an inlined
+function produces several rows sharing one name. A dict keyed by name therefore drops samples,
+the same shape of mistake as the `get_all_zone_stats()` defect below, except here every row is
+present and it is the reader who loses them. On `t5-wentbourne.tracy`,
+`CBinaryHeapT<CYapfRoadNode>::HeapifyDown` has three rows summing to 7,549 inclusive samples and
+the largest single row is 4,537.
+
+**Calibrate samples against a zone before quoting them as time.** Divide a zone's total by the
+inclusive sample count of the function it wraps. On the `t5-*` captures that gives 126,528.9 ns
+per sample, or 7.90 kHz against Tracy's nominal 8 kHz. Once that agrees, sample counts inside
+that subtree can be quoted as microseconds per call. Do it per capture rather than assuming.
+
+**Our zones carry no call stacks.** `get_zone_callstacks(name)` returns an empty list for every
+zone in every capture we have taken, because `src/profiling.h` builds on `ZoneScopedN` rather
+than the call-stack-capturing `ZoneScopedNS`. That is the right choice for a hot path, but it
+means per-zone callstack attribution is not available and subtree analysis has to come from
+`get_symbol_stats()` inclusive counts instead. That works when the functions of interest are
+template instantiations unique to one caller, and stops working when they are shared.
+
 ## Verification, and one real defect
 
 The bindings were checked against `tracy-csvexport` reading the same file,
