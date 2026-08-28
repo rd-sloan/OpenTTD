@@ -248,6 +248,49 @@ The practical split is to let each tool do what it is actually good at:
   per-zone callstack attribution, plots, locks, sections, frames, thread names,
   context switches. This is the reason to have the server at all.
 
+### A second defect: thread attribution is wrong
+
+Found on `m2-wentbourne-manual.tracy` while reading a memory capture, 2026-08-28. It presents as
+the trace being wrong rather than the reader: `GameLoop` and `CallVehicleTicks` appeared to run
+on a thread named `ottd:linkgraph` with zero zones, while `ottd:game` held 80,933 zones with
+nothing attributed to it.
+
+**`get_zone_occurrences_with_thread()` subscripts the wrong array.** From
+`python/bindings/ServerModule.cpp:484`:
+
+```cpp
+const uint16_t tidx = ztd.Thread();
+const uint64_t tid = ( tidx < threads.size() && threads[tidx] ) ? threads[tidx]->id : 0;
+```
+
+`ztd.Thread()` returns Tracy's *compressed* thread index; `threads` is `GetThreadData()`. Two
+different index spaces, one used to subscript the other. The correct call is
+`w.DecompressThread( tidx )`, provided at `server/TracyWorker.hpp:664` for this purpose.
+
+**`get_memory_events()` does not decompress at all.** `ServerModule.cpp:734` writes
+`d["thread_alloc"] = (uint32_t)ev.ThreadAlloc()`, the raw compressed index, while the binding's
+own comment describes the field as an OS thread id.
+
+**`get_threads()` is correct.** It reads `t->id` and asks `GetThreadName` about that same id, and
+its per-thread zone counts sum exactly to `get_zone_count()`.
+
+On the trace above the two index spaces differ by one, so every attribution lands on the next
+thread in `get_threads()` order. That offset is a coincidence of ordering on one trace and must
+not be assumed. To recover the real thread without patching the bindings, resolve it from a zone
+you already know the answer for:
+
+```python
+th = ctx.get_threads()
+wrong = ctx.get_zone_occurrences_with_thread("GameLoop", 50)[0][2]
+pos = next(i for i, t in enumerate(th) if t['id'] == wrong)
+# check that th[pos-1] is the thread you expect before trusting the offset elsewhere
+```
+
+Cross-check the result against something independent before believing it. Zone counts per thread
+from `get_threads()` are the easiest: on that trace `Sound` has 1,910 zones and the thread the
+offset resolves to has 1,909, which is close enough to confirm and would not have matched had the
+offset been wrong.
+
 ## Housekeeping
 
 Every loaded capture stays resident for the life of the process and ours are

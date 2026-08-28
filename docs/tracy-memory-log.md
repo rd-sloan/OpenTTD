@@ -734,7 +734,7 @@ larger sizes. Twenty thousand ticks would be 7 GB and is still out.
 | Configure guard, `OPTION_TRACY_MEM_GLOBAL` alone | **PASS**, configure refuses |
 | State fingerprint, wentbourne, 300 ticks | **PASS**, `21135C81503802F4`, identical to `build-tracy` |
 | Capture survives a full run | **PASS**, 12,971,700 allocations, no termination |
-| Interactive run | **NOT RUN.** Outstanding. |
+| Interactive run | **PASS.** Run by Sloan; see the follow-up entry below. |
 
 The unit suite is worth more than usual again. Catch2 allocates heavily before `main`, and the
 tier is live in that binary, so a badly ordered or unbalanced pair had every chance to show.
@@ -760,3 +760,95 @@ that a whole-run figure would not.
 3. The hot-spot tree is what settles the whole-run attribution question this entry had to leave
    open, and `get_memory_events` already returns a `callstack_idx` that
    `get_callstack_frames` resolves. The plumbing on the analysis side is done.
+
+### 2026-08-28, M2 interactive gate: passed, and it exposed a second bindings defect
+
+`benchmark/manual-traces/m2-wentbourne-manual.tracy`, 695 game loop iterations over 44.6 seconds,
+224 MB. **26,627,684 allocations reported to the default pool with no unmatched pair**, roughly
+twice the headless run's count, integrity gap zero, capture completed. The tier survives a real
+session with a draw thread, sound, an AI and profiler connects and disconnects.
+
+#### `get_zone_occurrences_with_thread` returns the wrong thread
+
+This took a while to unpick because it presents as the trace being wrong rather than the reader.
+`GameLoop`, `CallVehicleTicks` and `YapfRoadVehicleChooseTrack` all appeared to run on a thread
+named `ottd:linkgraph` that had zero zones, while `ottd:game` sat there with 80,933 zones and
+nothing attributed to it.
+
+The trace is fine. From `python/bindings/ServerModule.cpp:484`:
+
+```cpp
+const uint16_t tidx = ztd.Thread();
+const uint64_t tid = ( tidx < threads.size() && threads[tidx] ) ? threads[tidx]->id : 0;
+```
+
+`ztd.Thread()` is Tracy's **compressed** thread index and `threads` is `GetThreadData()`. Those
+are different index spaces, and the binding uses one to subscript the other. The correct call is
+`w.DecompressThread( tidx )`, which `TracyWorker.hpp:664` provides for exactly this.
+
+On this trace the two spaces happen to differ by one, so every thread attribution lands on the
+next thread in the list. Verified three ways once the offset was applied: `GameLoop` resolves to
+`ottd:game`, `Drawing` and `ViewportDrawing` to `Main thread`, and `Sound` to the unnamed thread
+whose 1,909 zones match the 1,910 `Sound` zones. Do not rely on the offset being one on another
+trace; it is a coincidence of ordering, not a fixed relationship.
+
+**`get_memory_events` has the same problem and does not even try.** `ServerModule.cpp:734` writes
+`d["thread_alloc"] = (uint32_t)ev.ThreadAlloc()`, which is the raw compressed index with no
+decompression at all, despite the surrounding comment describing it as an OS thread id.
+
+`get_threads()` is correct. It reads `t->id` directly and asks `GetThreadName` about that same
+id, and its per-thread zone counts sum exactly to the trace total.
+
+That is the second real defect in these bindings after the `get_all_zone_stats()` name collision,
+and it has the same character: a plausible-looking result, no error, and nothing to warn you.
+Recorded in `docs/tracy-mcp.md` next to the first.
+
+#### Memory tracking finds threads that no zone ever will
+
+Ten threads in this trace where the M1 interactive capture showed four. The new ones are
+`ottd:dmusic` and **six `ottd:linkgraph` threads, all with zero zones**.
+
+They were always there. Tracy registers a thread the first time it sees any event from it, and
+until M2 these threads produced no events at all, because nothing in `src/linkgraph` carries a
+zone. T3 instrumented the link graph's job count as a plot and T4 and T5 never went near the
+worker threads.
+
+So memory tracking doubles as thread discovery, and it has just pointed at a subsystem that runs
+on six threads with no instrumentation whatsoever. Worth remembering when the linkgraph next
+comes up as a cost.
+
+#### Where the allocations happen
+
+Steady-state window of 0.63 seconds, thread indices resolved through the offset above:
+
+| Thread | allocations | share | bytes |
+| --- | --- | --- | --- |
+| `ottd:game` | 864,373 | 98.3% | 89,686,203 |
+| `Main thread` (drawing) | 15,174 | 1.7% | 902,218 |
+
+Whole run, the default pool holds 26,627,684 allocations against 23,999,881 summed from
+`mem.allocs_per_tick`, so **2,627,803 or 9.9% happen outside the game loop body**, against 7.5%
+on the headless run. The extra is drawing, GUI and sound.
+
+That is the complement of the M1 interactive finding rather than a contradiction of it. The GUI
+allocates plenty; it just does not allocate *inside* the game loop, which is why per-tick counts
+came out identical between a headless run and a windowed one.
+
+`mem.allocs_per_tick` peaks at **167,098** again, the third run in a row to hit that exact figure
+on this savegame.
+
+#### Cost, with the usual caveat
+
+`GameLoop` averages 57.8 ms per tick here against 53.2 ms in the M1 interactive capture, so about
+9% for the tier. That is well below the 25.6% measured headless, and I would not read anything
+into the gap: the two captures are half an hour apart on a machine that has already drifted 15%
+in a session, and the interactive ones differ in how much drawing happened. The headless number
+is the one with a controlled comparison behind it.
+
+#### Gates
+
+All four items reported green by Sloan. What the trace confirms directly: the capture completed
+with 26.6 million memory events and no termination, `Drawing`, `ViewportDrawing`, `Video` and
+`Sound` all fire, 8,346 lock events, and the M0 plots and M1 pools are all present alongside the
+default pool. Items 1 to 3, the framerate comparison, the two connect and disconnect cycles and
+the clean exit, leave no trace evidence and are Sloan's report.
