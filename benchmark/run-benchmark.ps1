@@ -100,8 +100,41 @@ if (-not (Test-Path $exe)) {
 if (-not (Test-Path $savePath)) {
     throw "Savegame not found: $savePath"
 }
-if (-not (Test-Path (Join-Path $buildPath 'baseset'))) {
-    throw "No baseset in $buildPath. The game needs a graphics set to start."
+$basesetDir = Join-Path $buildPath 'baseset'
+if (-not (Test-Path $basesetDir)) {
+    throw "No baseset directory in $buildPath. Configure the build tree first."
+}
+
+# The directory existing is not enough, and testing only for it is how this check used to
+# waste an afternoon. CMake populates baseset with the fonts, openttd.grf, the null sound
+# and music sets, and the orig_* set definitions. Those orig_* files describe the original
+# Transport Tycoon Deluxe data files, which are not in the tree, so a freshly configured
+# build tree has a baseset directory and still no usable graphics set.
+#
+# When that happens OpenTTD calls ShowOSErrorBox, and win32_main.cpp has already set
+# _set_error_mode(_OUT_TO_MSGBOX), so the game puts up a modal dialog nobody can click. Under
+# Start-Process -NoNewWindow that presents as a run that hangs forever, produces no output at
+# all because redirected stdout is block buffered, and writes no report. Nothing about it
+# points at the graphics set.
+$graphicsSets = @(Get-ChildItem -Path $basesetDir -File | Where-Object {
+    $_.Extension -eq '.tar' -or ($_.Extension -eq '.obg' -and $_.Name -notlike 'orig_*')
+})
+if ($graphicsSets.Count -eq 0) {
+    $donor = Get-ChildItem -Path $repoRoot -Directory -Filter 'build*' |
+        Where-Object { $_.FullName -ne $buildPath } |
+        Where-Object { Test-Path (Join-Path $_.FullName 'baseset\*.tar') } |
+        Select-Object -First 1
+    $hint = if ($donor) {
+        "Copy one from a tree that has it:`n" +
+        "    Copy-Item '$($donor.FullName)\baseset\*.tar' '$basesetDir'"
+    } else {
+        "No other build tree in $repoRoot has one either. Launch the game interactively once " +
+        "and let it download a graphics set, or drop an OpenGFX tar into $basesetDir."
+    }
+    throw "No usable graphics set in $basesetDir.`n" +
+          "Only the orig_* set definitions are there, and they need original TTD data files " +
+          "this tree does not have. The game would put up a modal error dialog and hang.`n" +
+          $hint
 }
 
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null
@@ -137,7 +170,7 @@ function Invoke-Run {
     Write-Host " done in $([math]::Round($sw.Elapsed.TotalSeconds, 1))s (exit $($proc.ExitCode))"
 
     if ($proc.ExitCode -ne 0) {
-        throw "OpenTTD exited with code $($proc.ExitCode). A non-zero exit with no output usually means it could not find the baseset or the savegame."
+        throw "OpenTTD exited with code $($proc.ExitCode). A non-zero exit with no output usually means it failed during startup and said so in a message box rather than on stdout, which also swallows the buffered output. Check the baseset and the savegame first. To see the real message, run the same arguments by hand and read the dialog."
     }
     if (-not (Test-Path $StatsPath)) {
         throw "No report was written to $StatsPath."
