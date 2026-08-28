@@ -914,3 +914,62 @@ but with the sign of a real cost. T3 measured 1,775 ticks/s having added lock wr
 plots on top. So the T2 figure was a low sample, not a trend, and the unattached cost of the
 instrumentation remains unmeasurable at this fixture's noise level. Recorded because the T2
 entry invited watching for a trend that does not exist.
+
+### 2026-08-28: Tracy MCP server
+
+Separate track from T0-T5 and outside the phase numbering, because it changes nothing in this
+repository's build. Plan and post-mortem in `docs/tracy-mcp-plan.md`, operating instructions in
+`docs/tracy-mcp.md`. Only the parts that bear on the Tracy work are repeated here.
+
+Sloan approved the three open decisions: `eval` code execution yes, MCP scope local, clone at
+`C:\git\tracy`.
+
+The server is a Python sidecar in Tracy's own tree. It reads `.tracy` files, or attaches to a
+running game over the same port and protocol the GUI uses. No OpenTTD source, CMake option or
+build tree is touched, so none of the gates or benchmark figures are affected. Registered with
+Claude Code at local scope on `http://127.0.0.1:47380/mcp`; it only speaks HTTP, rejecting
+`stdio`, so it has to be started before Claude Code rather than launched on demand.
+
+Unit suite before commit: 2176 assertions in 98 test cases, pass.
+
+#### The verification gate failed, and that was the point
+
+The plan gated M3 on numbers from the 300 tick detail capture recorded above: `TickVehicle` at
+844,120, 1,735,760 zones total. Every one of them mismatched by three orders of magnitude.
+
+The reason is mundane. That capture was never saved. The file sitting at
+`benchmark/manual-traces/t5-Hilbergen-detail.tracy` is a 56,194 tick run with 324,127,539
+zones, and the numbers in this log came from a capture I made, read and discarded. **A recorded
+number is only a reference if the artefact behind it still exists.** Worth remembering the next
+time this log quotes a figure as a baseline.
+
+The replacement gate is better and should have been the plan all along: run `tracy-csvexport`
+over the same file and compare. Two independent readers of one trace need no historical
+reference, and either agreement means something or it does not.
+
+#### A real defect in the bindings
+
+The cross-check found that `get_all_zone_stats()` is keyed by bare zone name
+(`python/bindings/ServerModule.cpp:265`, `result[name] = ZoneStats{...}`). When two source
+locations share a name the second overwrites the first, with no summing and no warning.
+`get_root_zone_stats()` has the same bug at line 313.
+
+This bites our instrumentation directly. `AgeCargoAndPlaySound` is instantiated per vehicle
+type and has four source locations, all at `vehicle.cpp:1126`, with counts 152,843,120 / 7,260
+/ 4,400 / 440. The bindings report 4,400 and drop 152,850,820 zone instances, 47% of the trace.
+
+Every one of the 25 single-source-location zones agreed exactly on both count and total
+nanoseconds, which is the uncomfortable part: a gate that happened not to touch
+`AgeCargoAndPlaySound` would have looked clean.
+
+The guard is to compare `sum(s.count for s in stats.values())` against `get_zone_count()` and
+distrust the ranking if they differ. On this trace the gap is exactly the dropped instances
+plus two zones left unterminated at capture end.
+
+Consequence for how we use this: `tracy-csvexport` stays the authority on zone counts and
+totals, and the bindings are for what csvexport cannot see, which is sampled call stacks, plots,
+locks, sections, frames and context switches. That was the reason to want the server anyway.
+
+Also worth flagging because it cost time: Tracy's own `extra/mcp/eval_guide.md` documents these
+keys as `'name (addr)[arch] <srcloc_id>'` with a parseable source-location id. That format does
+not exist in v0.14.0, and no binding enumerates source-location ids at all.
