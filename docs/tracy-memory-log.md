@@ -157,6 +157,12 @@ atomic increments per allocation really is cheap, even at 31,416 allocations per
 That also means M0's counters can stay in for M2 and M3 as the cross-check the plan asked for,
 at no meaningful cost.
 
+**Do not read the wentbourne row at that precision.** The M1 entry below establishes that this
+machine drifted 14.7% across one session on an unchanged binary, which makes a single pair of
+two-minute runs worth nothing to two significant figures. The Hilbergen row survives, because
+both of its runs take two seconds and were taken seconds apart. The conclusion, that the counters
+are cheap enough to keep, is unaffected; the numbers behind it are weaker than they look.
+
 #### Gates
 
 | Gate | Result |
@@ -305,3 +311,186 @@ That is two zones left open when the profiler disconnected mid-session, not a na
 it is the same signature `docs/tracy-mcp.md` already records for a capture that ends inside live
 zones. A gap equal to the number of threads with an open zone at disconnect is expected; a gap in
 the thousands is the defect that note is really about.
+
+### 2026-08-28, phase M1: named pools
+
+Markers in `Pool::AllocateItem` and `Pool::FreeItem` and in the Squirrel allocator. This is the
+first phase that reports anything to Tracy's memory subsystem, so it is the first one that can
+be killed by an unbalanced pair. It was not.
+
+#### What was built
+
+| File | Change |
+| --- | --- |
+| `src/profiling.h` | `OTTD_MEM_ALLOC_N` and `OTTD_MEM_FREE_N` wrapping `TracyAllocN`/`TracyFreeN` |
+| `src/core/pool_func.hpp` | one marker in `AllocateItem`, one in `FreeItem` |
+| `src/script/squirrel.cpp` | markers in `ScriptAllocator::DoAlloc` and `::Free`, plus the `SQUIRREL_MEM_POOL` name constant |
+
+Two lines in one template gives a Tracy memory pool per object pool, which is the best coverage
+per line changed in this plan and the same argument that put T2 early.
+
+#### Three deviations from the plan, all deliberate
+
+**1. Gated on `OTTD_TRACY_MEM`, not the standard tier.** The plan put named pools on
+`WITH_TRACY` on the grounds that their volume is bounded, which is true and is confirmed below.
+But volume is about cost and the thing that actually bites here is risk: an unbalanced pair
+terminates the capture, and `build-tracy` is the interactive tree and a gate tree under decision
+D2. Keeping every memory event in one tree means a pairing bug can only ruin `build-tracy-mem`
+captures. Promotion later is one line in `profiling.h`, and the volume figures below say it would
+be safe. I would rather do it after M2 and M3 have shaken the pairing out.
+
+**2. No discard marker anywhere.** The plan suggested `TracyMemoryDiscard` for `Pool::CleanPool`.
+Reading the code says otherwise: `CleanPool` reaches every live item through
+`delete this->Get(i)`, which lands in `PoolItem::operator delete` and then `FreeItem`, so every
+slot is already reported freed one at a time. A discard on top would report each of them freed
+twice and Tracy would drop the connection. The `Tcache` drain that follows deallocates blocks
+whose frees were already reported, and needs no marker either. So M1 ships no discard macro at
+all, because there is nowhere correct to put one.
+
+**3. One `Squirrel` pool, not one per VM.** Tracy keys a memory pool on the *address* of its name
+string, so the name must be a compile-time constant, and there is one `ScriptAllocator` per
+Squirrel instance. All VMs therefore share a pool. It is also why the name is a named `static
+const char[]` rather than a repeated `"Squirrel"` literal: without string pooling two identical
+literals are two addresses and would show up as two pools with the same name.
+
+#### Volume, and the tier question
+
+wentbourne, 2,000 ticks, headless. 20 pools registered, 481,236 allocation records, so **241
+allocations per tick** and roughly 482 memory events per tick counting the frees.
+
+| Pool | allocations | share | element size |
+| --- | --- | --- | --- |
+| `CargoPacket` | 359,133 | 74.6% | 40 |
+| `Vehicle` | 84,608 | 17.6% | 632, 624, 568 |
+| `CargoPayment` | 14,704 | 3.1% | 40 |
+| `OrderList` | 13,899 | 2.9% | 56 |
+| `Station` | 2,648 | 0.6% | |
+| `Depot` | 2,015 | 0.4% | |
+| everything else | 4,229 | 0.9% | |
+
+Set against M2's ~63,000 events per tick, M1 is two orders of magnitude cheaper and only about
+twice the standard zone tier's 117 per tick. **On volume alone M1 belongs on the standard tier**,
+which is what the plan said. Deviation 1 above is a risk decision, not a cost one, and the
+numbers do not support keeping it gated forever.
+
+`CargoPacket` dominating by three quarters is the `Tcache` pool doing exactly what the marker was
+warned about: those 359,133 events are slot cycles on the free list, not heap traffic. Median
+lifetime is under a millisecond, so cargo packets are created and destroyed inside a tick.
+`Vehicle`'s median lifetime is the whole run, which is the savegame load allocating them and
+`CleanPool` freeing them at exit.
+
+#### The pairing holds
+
+Every pool reports allocations and frees in equal numbers with nothing live at capture end:
+
+| Pool | allocations | freed | live at end |
+| --- | --- | --- | --- |
+| `CargoPacket` | 359,133 | 359,133 | 0 |
+| `Vehicle` | 84,608 | 84,608 | 0 |
+| `CargoPayment` | 14,704 | 14,704 | 0 |
+| `OrderList` | 13,899 | 13,899 | 0 |
+
+A completed capture is the real proof, since Tracy drops the connection the moment it sees a free
+it cannot match. The 2,000 tick run finished with 233,147 zones and an integrity gap of zero.
+
+`(default)` shows zero events, confirming that M0's global counters still report nothing to Tracy
+and that the named pools are the only source. That also means the plan's warning about pool
+figures being a second accounting of bytes the default pool already counted does not bite until
+M2.
+
+#### A real caveat: usage and high water marks are meaningless here
+
+Every pool except `Engine` reports `usage` of 0 at capture end, and `Vehicle` reports 0 despite
+85,259 vehicle parts existing throughout. That is not a bug in the markers.
+
+`TRACY_ON_DEMAND` means Tracy only records from the moment the profiler connects. Pools populated
+by savegame load before or during connection have allocations Tracy never saw, and the on-demand
+relaxation forgives the unmatched frees rather than counting them. What survives is churn, which
+is what we wanted, but **occupancy and the high water mark are not trustworthy for any pool
+filled at load**. The plan claimed a `Vehicle` memory pool would turn the harness's static
+88-byte `BaseConsist` figure into a churn figure; churn yes, occupancy no.
+
+The `high` and `low` fields the bindings return are pointer addresses bounding the pool's memory
+map, not byte totals. Easy to misread as sizes, and I did for a minute.
+
+`callstack_idx` is 0 on every event, as designed. `TracyAllocN` captures no stack; that arrives
+with M3 and the `S` forms.
+
+#### The Squirrel pool needed a different test
+
+The headless benchmark runs no AI and no GameScript, so the `Squirrel` pool recorded zero events
+in the wentbourne capture and the marker was completely unexercised by it.
+
+The regression suite is the right test, and it is the project's own safety net for the Script API,
+which makes it the correct gate for a change to `squirrel.cpp` anyway. All four suites pass in
+`build-tracy-mem`. A capture of one 30,000 tick regression run shows **13,986 Squirrel
+allocations, 2.67 MB, every one freed by the end**, across sizes from 32 to 160 bytes. That
+exercises VM teardown as well as steady-state churn.
+
+Getting there needed a detour. `regression/regression.cfg` is absent from every build tree except
+`build`, so `Regression.cmake` could not find the config it passes with `-c`, OpenTTD fell back to
+the OS locale, and the whole suite failed on `Power Station` against `Power Plant` and
+`Railway construction` against `Railroad construction`. It reads like a catastrophic regression
+and is entirely a missing config file. `cmake --build <tree> --config <cfg> --target
+regression_files` places it. Worth knowing before the next person runs the suite outside `build`.
+
+#### Gates
+
+| Gate | Result |
+| --- | --- |
+| `openttd_test`, `build` with the option off | **PASS**, 2176 assertions in 98 test cases |
+| `openttd_test`, `build-tracy-mem` | **PASS**, 2176 assertions in 98 test cases |
+| Regression suites, `build-tracy-mem` | **PASS**, all four |
+| State fingerprint, wentbourne, 2,000 ticks | **PASS**, `497945F2C42DED8F` |
+| Capture survives a full run | **PASS**, 2,000 ticks, gap zero |
+| Interactive run | **NOT RUN.** Outstanding. |
+
+Trace size for the same 2,000 tick wentbourne run goes from 2.0 MB at M0 to 6.1 MB at M1.
+
+#### Overhead could not be measured, and that corrects the M0 entry too
+
+I could not get a usable number, and the reason is worth recording so nobody trusts the ones
+already written down.
+
+| Time | Tree | wentbourne 2,000 tick game loop |
+| --- | --- | --- |
+| 12:32 | `build-tracy`, no memory tracking | 103,919 ms |
+| 12:28 | `build-tracy-mem`, M0 | 104,660 ms |
+| 13:47 | `build-tracy-mem`, M1, capture attached | 107,297 ms |
+| 13:52 | `build-tracy-mem`, M1, no capture | 126,092 ms |
+| 13:55 | `build-tracy-mem`, M1, no capture | 125,772 ms |
+| 13:57 | `build-tracy-mem`, M1, no capture | 123,241 ms |
+| 14:00 | `build-tracy-mem`, M1, capture attached | 127,871 ms |
+| **14:05** | **`build-tracy`, no memory tracking, unchanged binary** | **119,159 ms** |
+
+That last row is the point. The same binary that ran in 103,919 ms at 12:32 took 119,159 ms at
+14:05, **14.7% slower with nothing changed**. This is an ordinary desktop with Discord, Steam,
+Slack and an Epic launcher on it, and the harness README already says timings from an
+instrumented tree are indicative only.
+
+Within the later window M1 sits about 3.4% above the no-memory baseline, which for 482 events per
+tick would be roughly 4 microseconds per event and is not credible for a lock and a queue write.
+Most of that 3.4% is drift too. The honest statement is that M1's cost is below what this method
+can resolve here.
+
+**Consequently the M0 entry's "+0.71%" for wentbourne should not be read at that precision.** It
+was a single pair of runs four minutes apart, and 15% drift across a session makes two
+significant figures meaningless. The Hilbergen pair in that entry, 884.4 ms against 889.8 ms, is
+better evidence because both runs take two seconds and sit seconds apart, so drift has no time to
+act. Read M0 and M1 as "small enough not to matter" and, if a real number is ever needed, measure
+it on a quiet machine with the two conditions interleaved.
+
+#### Captures
+
+`benchmark/manual-traces/m1-wentbourne.tracy` (2,000 ticks, standard tier plus M0 plots and M1
+pools) and `m1-regression.tracy` (one regression run, for the Squirrel pool).
+
+#### What M2 needs to know
+
+1. The pairing discipline works. Two markers placed where the pairing is guaranteed by
+   construction produced 481,236 matched pairs and four green regression suites. M2's global
+   override is a much wider surface and the same discipline will not carry it automatically.
+2. On-demand mode makes occupancy unusable, and that applies to the default pool at M2 as well.
+   Every allocation live at connection time is invisible. If occupancy ever matters, it needs a
+   `TRACY_NO_EXIT` scratch build and a capture that starts before the savegame loads.
+3. Whether to promote M1 to the standard tier is a decision waiting on M2 and M3, not on data.
