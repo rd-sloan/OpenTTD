@@ -1020,3 +1020,66 @@ Hilbergen trace was short by 152,850,822.
 State fingerprint, Hilbergen, 20,000 ticks: `build-tracy` and `build-tracy-detail` both
 reproduce the recorded baseline `015ED3D109C5CCCC`. Unit suite 2176 assertions in 98 test
 cases, pass. `build-tracy-detail` was rebuilt before capturing, per the rule above.
+
+### 2026-08-28: the T5 pathfinder caveat, closed
+
+T5 instrumented the nine YAPF entry points and nothing inside them, on the strength of a
+Hilbergen sampling panel where the hottest pathfinder frame was 0.15%. That entry recorded the
+caveat plainly: the finding was Hilbergen-only and wentbourne was unchecked. First real use of
+the Python bindings was to check it.
+
+**The conclusion does not carry over.** Wentbourne spends 12.79% of `GameLoop` inside the YAPF
+entry points, against 2.17% on Hilbergen. By sampled self time the same gap shows as 5.11% of
+`openttd.exe` self samples against 0.69%.
+
+Both captures are `t5-*.tracy`, standard tier, elevated, with the integrity guard returning a
+gap of zero on each.
+
+| Zone | wentbourne calls | wentbourne total | Hilbergen calls | Hilbergen total |
+| --- | --- | --- | --- | --- |
+| `YapfRoadVehicleChooseTrack` | 56,840 | 9,413.87 ms | 10 | 0.15 ms |
+| `YapfRoadVehicleFindNearestDepot` | 27,404 | 1,236.55 ms | 0 | 0 |
+| `YapfShipChooseTrack` | 53,198 | 1,164.01 ms | 2 | 0.18 ms |
+| `YapfTrainChooseTrack` | 38,316 | 928.45 ms | 102,316 | 1,986.12 ms |
+| `YapfTrainCheckReverse` | 5,942 | 188.50 ms | 8,075 | 220.69 ms |
+| `YapfShipCheckReverse` | 2,620 | 151.44 ms | 1 | 0.07 ms |
+| `YapfTrainFindNearestDepot` | 12,414 | 61.12 ms | 4,219 | 27.89 ms |
+| **Total** | | **13,143.95 ms** | | **2,238.45 ms** |
+| | | **12.79% of GameLoop** | | **2.17% of GameLoop** |
+
+**Road vehicles are the whole story.** `YapfRoadVehicleChooseTrack` alone is 9.41 of the 13.14
+seconds, 72% of all pathfinding, and it costs 165.6 us per call against 24.2 us for the train
+equivalent. Hilbergen called it ten times in the entire capture, which is why none of this was
+visible there. Same fixture blindness that hid the road, ship and aircraft detail zones.
+
+The two figures above are not the same measurement and should not be averaged. The zone number
+is YAPF wall time over `GameLoop` wall time and is the direct answer. The sample number divides
+by all `openttd.exe` self samples across the whole capture, which includes viewport and GUI work
+outside the game loop, so it reads lower. Whole-capture percentages are worse still, because
+Tracy resolves its own call stacks through dbghelp and that accounts for roughly 10% of samples
+in these traces.
+
+#### The T5 decision holds up, for a reason worth keeping
+
+Entry-point-only instrumentation was the right call even though the premise behind it was wrong.
+The zones were enough to size the cost, and sampling supplied the internals for free:
+
+| Symbol | wentbourne self | Hilbergen self |
+| --- | --- | --- |
+| `CBinaryHeapT<CYapfRoadNode>::HeapifyDown` | 0.533% | 0.018% |
+| `HashTableSlot<CYapfRoadNode>::Find` | 0.233% | n/a |
+| `CYapfCostRailT<...>` | n/a | 0.090% |
+| `CFollowTrackT<0,Train,1,1>::Follow` | n/a | 0.060% |
+
+The hot code differs by map. Wentbourne is node list machinery, the binary heap and hash table
+lookups. Hilbergen is cost calculation and track following. Instrumenting either set internally
+would have paid for zones in the other map's cold path. Entry-point zones for attribution plus
+sampling for internals is the combination that works, and it is now demonstrated rather than
+assumed.
+
+#### Standing correction
+
+T5's summary should be read as "pathfinding is negligible on Hilbergen", not "pathfinding is
+negligible". Any future statement about a cost being negligible needs the fixture named in the
+same sentence. Hilbergen loads with zero road, ship and aircraft consists, so it cannot answer
+questions about three of the four vehicle types.

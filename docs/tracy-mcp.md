@@ -121,6 +121,38 @@ design rather than an oversight, and it is why the thing listens on loopback
 only. But registering this server does hand an assistant arbitrary code execution
 under your account. Stop the sidecar when you are not using it.
 
+## Reading sampled data without fooling yourself
+
+Sampling is the reason to have this at all, since `tracy-csvexport` cannot see it. Two things
+distort the numbers and both are easy to miss.
+
+**Tracy is in its own profile.** It resolves call stacks through dbghelp in the client process,
+and `GetSymLoadError` plus `GetTimestampForLoadedLibrary` came to 9.8% of samples in the `t5-*`
+captures. The `WideCharToMultiByte` and `RtlCreateUnicodeString` entries near the top are very
+likely the same path, which would put it nearer 15%.
+
+Filter by image rather than trying to subtract named offenders:
+
+```python
+syms = ctx.get_symbol_stats()
+ottd = [s for s in syms if "openttd" in s.get("image", "").lower()]
+denom = sum(s["excl"] for s in ottd)
+```
+
+Everything from `dbghelp.dll`, `ntdll.dll`, `nvoglv64.dll` and friends drops out, and what is
+left is code we wrote.
+
+**Zone percentages and sample percentages answer different questions.** A zone total over
+`GameLoop` total is the share of simulation time. A symbol's self samples over all `openttd.exe`
+self samples divides by the whole capture, viewport and GUI included, so an interactive trace
+reads lower. On `t5-wentbourne.tracy` pathfinding is 12.79% by the first measure and 5.11% by
+the second. Neither is wrong and averaging them is meaningless. Quote the one that matches the
+question and say which it is.
+
+For simulation questions the cleanest input is a headless capture at standard tier taken from an
+elevated shell: no rendering in the profile, sampling still on, and none of the detail tier's
+observer effect.
+
 ## Verification, and one real defect
 
 The bindings were checked against `tracy-csvexport` reading the same file,
