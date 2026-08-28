@@ -99,6 +99,12 @@ DEFINE_POOL_METHOD(inline AllocationResult<Tindex>)::AllocateItem(size_t size, s
 	} else {
 		item = reinterpret_cast<Titem *>(this->allocator.allocate(size));
 	}
+	/* Reported for both branches, so this pool measures slot occupancy rather than heap
+	 * traffic. For a Tcache pool the cached branch does not touch the heap at all, so the two
+	 * are not the same number and must not be compared. The name comes from the pool's own
+	 * string_view, which every pool constructs from a literal; a pool named from a
+	 * std::string would hand Tracy an unstable pointer. @see OTTD_MEM_ALLOC_N */
+	OTTD_MEM_ALLOC_N(item, size, this->name.data());
 	this->data[index] = item;
 	SetBit(this->used_bitmap[index / BITMAP_SIZE], index % BITMAP_SIZE);
 	/* MSVC complains about casting to narrower type, so first cast to the base type... then to the strong type. */
@@ -160,6 +166,11 @@ DEFINE_POOL_METHOD(void)::FreeItem(size_t size, size_t index)
 {
 	assert(index < this->data.size());
 	assert(this->data[index] != nullptr);
+	/* Before the deallocation, and before the Tcache branch reinterprets the item as an
+	 * AllocCache and writes through it. CleanPool reaches every live item through this
+	 * function, so it needs no mass-discard marker of its own; adding one there would report
+	 * each slot freed twice and Tracy would drop the capture. */
+	OTTD_MEM_FREE_N(this->data[index], this->name.data());
 	if (Tcache) {
 		AllocCache *ac = reinterpret_cast<AllocCache *>(this->data[index]);
 		ac->next = this->alloc_cache;

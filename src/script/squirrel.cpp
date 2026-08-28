@@ -29,6 +29,15 @@
 #define SCRIPT_DEBUG_ALLOCATIONS
  */
 
+/**
+ * Name of the Tracy memory pool holding Squirrel VM allocations.
+ *
+ * One object rather than a repeated literal, because Tracy keys a memory pool on the address of
+ * its name. Every VM shares the pool: the name has to be a compile-time constant, and there is
+ * one ScriptAllocator per Squirrel instance, so per-VM pools are not available this way.
+ */
+[[maybe_unused]] static const char SQUIRREL_MEM_POOL[] = "Squirrel";
+
 struct ScriptAllocator {
 	friend class Squirrel;
 
@@ -81,6 +90,7 @@ private:
 			void *p = this->allocator.allocate(requested_size);
 			assert(p != nullptr);
 			this->allocated_size += requested_size;
+			OTTD_MEM_ALLOC_N(p, requested_size, SQUIRREL_MEM_POOL);
 
 #ifdef SCRIPT_DEBUG_ALLOCATIONS
 			assert(this->allocations.find(p) == this->allocations.end());
@@ -145,6 +155,7 @@ public:
 	void Free(void *p, SQUnsignedInteger size)
 	{
 		if (p == nullptr) return;
+		OTTD_MEM_FREE_N(p, SQUIRREL_MEM_POOL);
 		this->allocator.deallocate(reinterpret_cast<uint8_t*>(p), size);
 		this->allocated_size -= size;
 

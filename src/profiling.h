@@ -181,9 +181,28 @@ private:
 /** Plot the allocations made in the enclosing scope, which is one game loop iteration. */
 #	define OTTD_MEM_TICK(variable) ScopedProfilerMemoryTick variable
 
+/**
+ * Report an allocation in a named memory pool.
+ *
+ * \a name must be a pointer to a string literal, and Tracy identifies the pool by that
+ * *pointer* rather than by the characters it points at. So a name has to come from one object:
+ * two identical literals in different translation units, or in one that is compiled without
+ * string pooling, are two pools that look the same in the UI.
+ *
+ * Every reported free must have a matching reported allocation or Tracy terminates the capture
+ * outright, so a marker only belongs where the pairing is guaranteed by construction.
+ * TRACY_ON_DEMAND, forced on in CMakeLists.txt, forgives the case where the allocation happened
+ * before the profiler connected, and nothing else.
+ */
+#	define OTTD_MEM_ALLOC_N(ptr, size, name) TracyAllocN(ptr, size, name)
+/** Report a deallocation in a named memory pool. @see OTTD_MEM_ALLOC_N */
+#	define OTTD_MEM_FREE_N(ptr, name) TracyFreeN(ptr, name)
+
 #else
 
 #	define OTTD_MEM_TICK(variable)
+#	define OTTD_MEM_ALLOC_N(ptr, size, name)
+#	define OTTD_MEM_FREE_N(ptr, name)
 
 #endif /* WITH_TRACY && OTTD_TRACY_MEM */
 
