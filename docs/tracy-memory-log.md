@@ -981,7 +981,7 @@ draining for nothing the thirty did not already say.
 | Configure guard, `OPTION_TRACY_MEM_CALLSTACK` alone | **PASS**, configure refuses |
 | State fingerprint, wentbourne, 30 ticks | **PASS**, `31B1257FC65D1424`, identical to `build-tracy` |
 | Capture survives a full run | **PASS**, 4,512,746 allocations, every one with a stack |
-| Interactive run | **NOT RUN.** Outstanding. |
+| Interactive run | **PASS.** Run by Sloan; see the follow-up entry below. |
 
 #### The plan is complete
 
@@ -996,3 +996,86 @@ one thing has been added to it:
 3. **Promoting M1's named pools to the standard tier**, still a decision rather than a
    measurement. M2 and M3 have now shaken the pairing out across four captures without a single
    unmatched event, so the argument for keeping them gated is weaker than it was.
+
+### 2026-08-28, M3 interactive gate: passed, and it found the same bug in the draw path
+
+`benchmark/manual-traces/m3-wentbourne-manual.tracy`, 585 game loop iterations over 50.3 seconds,
+244 MB. **23,107,549 allocations, every one carrying a call stack, with no unmatched pair.**
+Integrity gap zero, 7,026 lock events, the capture completed through connects and disconnects.
+`mem.allocs_per_tick` peaks at 167,098 for the fourth run running.
+
+This is the trace that justifies running the gate at all rather than treating it as a formality.
+Everything M3 measured headless was the game loop. The draw path only exists here.
+
+#### The viewport sprite sorter allocates 1,859 times per frame
+
+Allocations that fall outside a `GameLoop` zone, attributed by call stack:
+
+| Nearest real caller | allocations | share | bytes |
+| --- | --- | --- | --- |
+| `ViewportSortParentSpritesSSE41` | 16,735 | **71.2%** | 440,597 |
+| `Blitter_32bppOptimized::EncodeInternal<0>` | 3,486 | 14.8% | 70,695,776 |
+| Uniscribe text shaping, four entries | 1,747 | 7.4% | 68,132 |
+| `UniquePtrSpriteAllocator::AllocatePtr` | 296 | 1.3% | 25,654,531 |
+| `DecodeSingleSprite` | 291 | 1.2% | 342,259 |
+
+The first one is the finding. `ViewportSortParentSpritesSSE41`
+(`viewport_sprite_sorter_sse4.cpp:29`) constructs three containers fresh on every call:
+
+```cpp
+std::stack<ParentSpriteToDraw *> sprite_order;
+std::forward_list<std::pair<int64_t, ParentSpriteToDraw *>> sprite_list;
+std::vector<ParentSpriteToDraw *> preceding;
+```
+
+and the size histogram matches the source exactly. 9,776 allocations of 24 bytes are
+`forward_list` nodes, one per sprite, which that container cannot avoid. 5,794 of 16 bytes are
+the `stack`'s backing `std::deque`: `ParentSpriteToDraw *` is 8 bytes, so **MSVC's `_Block_size`
+is 2** and the deque allocates once per two elements pushed, plus a proxy per construction. The
+64, 128 and 256 byte allocations are `preceding` doubling.
+
+That comes to **1,859 allocations per `Drawing` zone**, or about 1,086 `forward_list` nodes and
+644 deque blocks per frame at this zoom level.
+
+**It is the same pathology as the YAPF node list, in a completely different subsystem.** Same
+`std::deque` block-size rule, same shape of fix: these are function-local containers on a path
+that runs every frame, and a reused instance would eliminate nearly all of it. The prize is
+smaller, since the draw path is 10.4% of the run's allocations against the pathfinder's share of
+the game loop, but it was invisible to every headless capture in this work.
+
+`Blitter_32bppOptimized::EncodeInternal` and `UniquePtrSpriteAllocator::AllocatePtr` are 96 MB of
+the roughly 97 MB allocated outside the loop, in 3,782 allocations averaging 20 KB and 86 KB.
+That is the sprite cache populating rather than steady-state churn, and it is not a problem, but
+it does mean **bytes and counts point at completely different code here** and a reader who
+sorts by one will not find what the other shows.
+
+#### On the 1.5% and the 10.4%
+
+In the analysis window, allocations outside the game loop are 1.5% of the total. Across the whole
+run they are 10.4%. Both are true and the window is the misleading one: it sits early, where road
+pathfinding is at its heaviest and swamps everything else. Quote 10.4% for the run.
+
+#### Cost
+
+`GameLoop` averages 76.8 ms per tick against 57.8 ms in the M2 interactive capture, so about a
+third more for the callstack tier. Well below the +113% measured headless, and I would not read
+the difference as meaning anything: the two captures are half an hour apart, differ in how much
+drawing happened, and this machine has already drifted 15% inside a session. The headless number
+is the one with a controlled comparison behind it.
+
+#### Gates
+
+All four items reported green by Sloan. The trace confirms what it can: 23.1 million
+callstack-carrying allocations with no termination, `Drawing`, `ViewportDrawing`, `Video` and
+`Sound` all firing, the M0 plots and M1 pools present alongside the default pool, and stacks that
+resolve through the GUI all the way to `VideoDriver::Tick`. The framerate comparison, the two
+connect and disconnect cycles and the clean exit leave no trace evidence and are Sloan's report.
+
+#### The deferred list gains an item
+
+`ViewportSortParentSpritesSSE41`'s per-call containers now sit alongside the YAPF node arena.
+Both are the same fix for the same reason, and both are changes rather than instrumentation.
+Note that the viewport sorter has a non-SSE sibling, `ViewportSortParentSprites` at
+`viewport.cpp:1600`, which declares the same three containers and needs the same treatment. And
+that this is again substantially an MSVC problem: libstdc++ and libc++ use a 512-byte minimum
+deque block and were already batching 64 pointers per allocation.
