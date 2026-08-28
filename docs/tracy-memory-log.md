@@ -443,7 +443,7 @@ regression_files` places it. Worth knowing before the next person runs the suite
 | Regression suites, `build-tracy-mem` | **PASS**, all four |
 | State fingerprint, wentbourne, 2,000 ticks | **PASS**, `497945F2C42DED8F` |
 | Capture survives a full run | **PASS**, 2,000 ticks, gap zero |
-| Interactive run | **NOT RUN.** Outstanding. |
+| Interactive run | **PASS.** Run by Sloan; see the follow-up entry below. |
 
 Trace size for the same 2,000 tick wentbourne run goes from 2.0 MB at M0 to 6.1 MB at M1.
 
@@ -494,3 +494,90 @@ pools) and `m1-regression.tracy` (one regression run, for the Squirrel pool).
    Every allocation live at connection time is invisible. If occupancy ever matters, it needs a
    `TRACY_NO_EXIT` scratch build and a capture that starts before the savegame loads.
 3. Whether to promote M1 to the standard tier is a decision waiting on M2 and M3, not on data.
+
+### 2026-08-28, M1 interactive gate: passed, and it found something better than a bug
+
+Sloan ran the gate and saved `benchmark/manual-traces/m1-wentbourne-manual.tracy`, 793 game loop
+iterations across 46.8 seconds of a windowed session with a draw thread, sound, an AI, and the
+profiler connecting and disconnecting.
+
+Nothing is wrong with it. Integrity gap zero, 139,042 zones, 9,522 lock events, all nineteen
+active memory pools reporting allocations and frees in equal numbers. The capture survived, which
+is what a memory phase's gate is really testing.
+
+#### Per-tick allocation counts are deterministic
+
+This was not what I went looking for. Comparing `mem.allocs_per_tick` tick for tick against the
+headless null-driver capture of the same savegame:
+
+| | |
+| --- | --- |
+| ticks compared | 793 |
+| **exactly equal** | **782** |
+| within 1% | 792 |
+| interactive mean | 33,932 |
+| headless mean over the same first 793 ticks | 33,934 |
+
+Two allocations per tick apart on the mean, and four fifths of the individual ticks are bit
+identical, between a headless run with no video driver and a windowed session that is also
+drawing, mixing sound and running a Squirrel VM.
+
+The eleven ticks that differ are more interesting than the 782 that do not, because their
+differences **cancel in pairs**: +310 at tick 300 against -310 at 319, -192 at 445 against +192
+at 448, +181 at 601 against -181 at 633. That is the same allocations happening a few ticks
+either side, not different allocations. Asynchronous work landing on a different tick depending
+on thread scheduling, and the link graph is the obvious candidate since its jobs complete on a
+worker thread. The two genuine outliers are tick 0, off by 1,630, which is startup, and three
+ticks off by exactly 12.
+
+Three things follow.
+
+**The M0 interactive entry understated its own result.** It concluded the GUI does not allocate
+inside the game loop from three means agreeing within 1.7%. The real statement is much stronger:
+the individual ticks agree exactly. The draw thread contributes essentially nothing to the delta,
+not merely little on average.
+
+**Allocation profiling is reproducible.** A before-and-after comparison in M2 or M3 can be read at
+single-allocation granularity rather than statistically, which is worth a great deal when the
+point of M2 is to attribute allocations to code and then change that code.
+
+**Allocation count tracks game state.** It is deterministic in the same way and for the same
+reason the state fingerprint is. I am not proposing it as a desync check, and the eleven
+scheduling-sensitive ticks would have to be understood first, but it is worth writing down.
+
+#### One pool has live allocations at the end, and it is the interesting one
+
+| Pool | allocations | freed | live at end | usage |
+| --- | --- | --- | --- | --- |
+| `Engine` | 1,024 | 768 | **256** | 69,632 bytes |
+| every other pool | | | 0 | 0 |
+
+Not a leak. `Engine` is the only pool whose objects are created **after** the profiler connects,
+so it is the only one where Tracy sees a complete lifecycle. Everything else was populated by
+savegame load before or during connection, which is exactly why they all read zero live and zero
+usage, as the M1 entry above warned. 1,024 being four times 256 says the engine table was built
+four times and torn down three, which is what loading a game a few times in one session looks
+like.
+
+So `Engine` is the one pool that demonstrates the whole path working, including `CleanPool`
+reporting each slot freed through `PoolItem::operator delete`. It is also the answer to anyone
+who reads the zero-usage columns and concludes the markers are broken.
+
+#### The Squirrel marker is exercised here, unlike in the benchmark
+
+10,119 allocations, 1.74 MB, every one freed, sizes clustered at 32, 144, 160 and 88 bytes,
+median lifetime 0.258 ms and a longest of 46 seconds, which is the session. The headless benchmark
+records zero because it runs no scripts, so between this and the regression capture the marker is
+now covered by two independent runs.
+
+#### Two notes, neither a problem
+
+**Sampling was off.** The capture has zero callstack samples, because sampling on Windows needs an
+elevated profiler and this one was not. It does not matter for this gate, and it is worth knowing
+before anyone tries to read sampled stacks out of this trace.
+
+**Tracy invents a memory usage plot per named pool.** The plot list in this trace suddenly has
+nineteen extra entries, `CargoPacket` alone carrying 380,935 points, which is two per memory
+event. They cost nothing on disk: `TracyWorker.cpp:8598` explicitly skips `PlotType::Memory` when
+writing a trace and rebuilds them from the events on load. Checked rather than assumed, because
+two plot points per allocation would have been a real problem for M2.
