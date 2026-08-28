@@ -198,11 +198,29 @@ private:
 /** Report a deallocation in a named memory pool. @see OTTD_MEM_ALLOC_N */
 #	define OTTD_MEM_FREE_N(ptr, name) TracyFreeN(ptr, name)
 
+/**
+ * Report an allocation in Tracy's default memory pool, which is the whole process heap.
+ *
+ * Only #profiling_mem.cpp uses these, and only when OTTD_TRACY_MEM_GLOBAL is set on that one
+ * translation unit. Reporting order matters and is not symmetric: an allocation is reported
+ * after the memory is handed out, and a deallocation *before* the memory is released. Free the
+ * memory first and another thread can win the same address and report its allocation before
+ * this thread reports the free, which Tracy reads as the same address allocated twice and
+ * terminates the capture over.
+ *
+ * @see OTTD_MEM_ALLOC_N for the pairing rule these share.
+ */
+#	define OTTD_MEM_ALLOC(ptr, size) TracyAlloc(ptr, size)
+/** Report a deallocation in Tracy's default memory pool. @see OTTD_MEM_ALLOC */
+#	define OTTD_MEM_FREE(ptr) TracyFree(ptr)
+
 #else
 
 #	define OTTD_MEM_TICK(variable)
 #	define OTTD_MEM_ALLOC_N(ptr, size, name)
 #	define OTTD_MEM_FREE_N(ptr, name)
+#	define OTTD_MEM_ALLOC(ptr, size)
+#	define OTTD_MEM_FREE(ptr)
 
 #endif /* WITH_TRACY && OTTD_TRACY_MEM */
 

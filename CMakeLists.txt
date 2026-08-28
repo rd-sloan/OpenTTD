@@ -270,6 +270,24 @@ target_precompile_headers(openttd_lib
 )
 set_source_files_properties(src/3rdparty/fmt/format.cc PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 
+if(OPTION_TRACY_MEM)
+    # Scoped to this one translation unit rather than added with add_definitions, so switching
+    # the global heap tier rebuilds one file instead of the whole tree. It has to leave the
+    # precompiled header alone as well, because MSVC rejects a translation unit whose
+    # definitions differ from the ones the PCH was built with.
+    #
+    # These belong here rather than in src/CMakeLists.txt where the file is added: source file
+    # properties are visible only in the directory scope that sets them, and openttd_lib is
+    # declared in this file. Setting them next to the source silently does nothing, which is
+    # exactly how it was got wrong the first time.
+    set_source_files_properties(src/profiling_mem.cpp PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+    if(OPTION_TRACY_MEM_GLOBAL)
+        set_source_files_properties(src/profiling_mem.cpp PROPERTIES
+            COMPILE_DEFINITIONS OTTD_TRACY_MEM_GLOBAL
+        )
+    endif()
+endif()
+
 add_subdirectory(${CMAKE_SOURCE_DIR}/bin)
 add_subdirectory(${CMAKE_SOURCE_DIR}/src)
 add_subdirectory(${CMAKE_SOURCE_DIR}/media)

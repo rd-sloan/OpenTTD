@@ -8,11 +8,13 @@
 /**
  * @file profiling_mem.cpp Global operator new and delete replacements that count allocations.
  *
- * Compiled only when OPTION_TRACY_MEM is set, which also requires OPTION_TRACY. This is
- * phase M0 of docs/tracy-memory-plan.md: the allocation count is measured and plotted, and
- * nothing is reported to Tracy's memory subsystem yet. Allocation volume decides whether
- * the later phases are viable at all, and a counter that reads wrong is a bad number, while
- * a Tracy memory event that reads wrong terminates the whole capture with no diagnostic.
+ * Compiled only when OPTION_TRACY_MEM is set, which also requires OPTION_TRACY.
+ *
+ * The counters and their per-tick plots are phase M0 of docs/tracy-memory-plan.md and are
+ * always on in this file. Reporting the same allocations to Tracy's default memory pool is
+ * phase M2 and needs OPTION_TRACY_MEM_GLOBAL as well, because it turns every allocation in
+ * the process into a memory event. The counters stay either way: they are the cross-check
+ * against the event count Tracy receives, and they cost far less than the events do.
  *
  * This file deliberately does not include safeguards.h. Every other translation unit
  * includes it last, which turns malloc into a compile error; a replacement operator new has
@@ -31,6 +33,24 @@
 
 #include <atomic>
 #include <new>
+
+/*
+ * The global heap tier, phase M2. OTTD_TRACY_MEM_GLOBAL is set on this translation unit alone,
+ * from src/CMakeLists.txt, so switching the tier rebuilds one file rather than the whole tree.
+ *
+ * Off, the counters below still run and the process reports nothing to Tracy's default memory
+ * pool, which is what keeps the named pools of phase M1 usable for long captures. On, every
+ * allocation in the process becomes a memory event and wentbourne produces roughly 63,000 of
+ * them per tick, so captures are a few hundred ticks at most.
+ * @see docs/tracy-memory-log.md
+ */
+#ifdef OTTD_TRACY_MEM_GLOBAL
+#	define REPORT_ALLOC(ptr, size) OTTD_MEM_ALLOC(ptr, size)
+#	define REPORT_FREE(ptr) OTTD_MEM_FREE(ptr)
+#else
+#	define REPORT_ALLOC(ptr, size)
+#	define REPORT_FREE(ptr)
+#endif
 
 /*
  * Relaxed ordering throughout. Nothing here orders anything else, and the plotted figures
@@ -58,6 +78,8 @@ static void *CountedAlloc(size_t size)
 	if (ptr != nullptr) {
 		_mem_alloc_count.fetch_add(1, std::memory_order_relaxed);
 		_mem_alloc_bytes.fetch_add(size, std::memory_order_relaxed);
+		/* After the allocation, so the address exists and no other thread can hold it. */
+		REPORT_ALLOC(ptr, size);
 	}
 	return ptr;
 }
@@ -72,6 +94,8 @@ static void CountedFree(void *ptr)
 {
 	if (ptr == nullptr) return;
 	_mem_free_count.fetch_add(1, std::memory_order_relaxed);
+	/* Before the release, and this order is not interchangeable. @see OTTD_MEM_ALLOC */
+	REPORT_FREE(ptr);
 	free(ptr);
 }
 

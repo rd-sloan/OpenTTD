@@ -61,6 +61,10 @@ add_files(
     CONDITION OPTION_TRACY_MEM
 )
 
+# The per-file properties that go with it are set next to the openttd_lib target in the top
+# level CMakeLists.txt, because source file properties only reach the directory scope that
+# declared the target and openttd_lib is declared there, not here.
+
 add_files(
     aircraft.h
     aircraft_cmd.cpp
