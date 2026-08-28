@@ -581,3 +581,182 @@ nineteen extra entries, `CargoPacket` alone carrying 380,935 points, which is tw
 event. They cost nothing on disk: `TracyWorker.cpp:8598` explicitly skips `PlotType::Memory` when
 writing a trace and rebuilds them from the events on load. Checked rather than assumed, because
 two plot points per allocation would have been a real problem for M2.
+
+### 2026-08-28, phase M2: the global heap tier
+
+M0's counters now also report to Tracy's default memory pool. This is the phase the whole plan
+was built around and the one most likely to fail, and it did not.
+
+#### What was built
+
+| File | Change |
+| --- | --- |
+| `cmake/Options.cmake` | `OPTION_TRACY_MEM_GLOBAL`, a `FATAL_ERROR` guard requiring `OPTION_TRACY_MEM`, a status line and a volume warning |
+| `CMakeLists.txt` | `OTTD_TRACY_MEM_GLOBAL` and `SKIP_PRECOMPILE_HEADERS` set on `profiling_mem.cpp` alone |
+| `src/profiling.h` | `OTTD_MEM_ALLOC` and `OTTD_MEM_FREE` wrapping `TracyAlloc`/`TracyFree` |
+| `src/profiling_mem.cpp` | the tier switch and the two reporting calls |
+
+**Three options now, where the plan had two.** `OPTION_TRACY_MEM` covers M0's counters and M1's
+named pools, both of which are cheap enough for long captures; `OPTION_TRACY_MEM_GLOBAL` covers
+this tier, which is not. Folding them together would have made M1 unusable for anything but a
+short run, which is the opposite of what the M1 entry concluded about its volume.
+
+**The define is scoped to one translation unit** rather than added with `add_definitions`, so
+switching the tier rebuilds `profiling_mem.cpp` and relinks, instead of rebuilding the tree twice
+over as `OPTION_TRACY_DETAIL` does. Verified: three files touched on the switch. That is why
+there is no sixth build tree. It costs one opt-out from the precompiled header, because MSVC
+rejects a translation unit whose definitions differ from the ones the PCH was built with.
+
+Reporting order is not symmetric and the comment in `profiling.h` says why. An allocation is
+reported after `malloc` returns; a free is reported **before** `free` releases the address.
+Release first and another thread can win the same address and report its allocation before this
+thread reports the free, which Tracy reads as one address allocated twice and terminates the
+capture over.
+
+#### The bug I nearly recorded a result from
+
+The first M2 capture looked fine. It ran, it finished, the fingerprint matched, 38,481 zones,
+gap zero. It was also completely wrong: the global tier had never been compiled in.
+
+`set_source_files_properties` had gone into `src/CMakeLists.txt` next to the `add_files` call for
+the same source, which is the obvious place and the wrong one. **Source file properties are
+visible only in the directory scope that sets them**, and `openttd_lib` is declared in the top
+level `CMakeLists.txt`, so neither the define nor the PCH opt-out reached the compiler. No error,
+no warning. `grep -c OTTD_TRACY_MEM_GLOBAL build-tracy-mem/openttd_lib.vcxproj` returned 0.
+
+Two things gave it away, and neither was the build:
+
+- Tracy's `(default)` memory pool had **zero** events after a run that the M0 counters said made
+  11,998,045 allocations.
+- The trace was 2.18 MB. With the tier actually on it is 109.32 MB.
+
+The fix is one block moved into the top level file, immediately below the identical
+`set_source_files_properties` call that `src/3rdparty/fmt/format.cc` already uses. That existing
+line was sitting there as a worked example the whole time.
+
+That is the second silent no-op in this work, after the baseset directory check that passed on an
+empty baseset. Both had the same shape: a check or a setting that looks right, produces no error,
+and quietly does nothing. **Verify that a build option reached the compiler**, not just that the
+build succeeded.
+
+#### It balances
+
+wentbourne, 300 ticks, headless, with the tier live:
+
+| | |
+| --- | --- |
+| default pool allocations | **12,971,700** |
+| M0 counters, summed over the game loop bodies | 11,998,045 |
+| difference | 973,655, or 7.5% |
+| zones | 38,533, integrity gap 0 |
+| bytes live in the default pool at capture end | 7,976,126 |
+
+The capture completed, which is the proof that matters: Tracy drops the connection the instant it
+sees a free it cannot match, and 26 million events went through without one.
+
+The two counts reconcile in the right direction and by a sensible amount. Tracy sees every
+allocation in the process; the M0 plots only see the ones inside the game loop body. The 973,655
+difference is savegame load, the null driver's own work and the save at exit. This is the
+cross-check the plan asked for, and it is the first time the two readers have been compared.
+
+#### The finding: 81% of allocations are pathfinder nodes
+
+In a steady-state window of 0.606 seconds, about 7 ticks, taken 3 seconds into the capture:
+
+| Allocation size | count | share |
+| --- | --- | --- |
+| **48 bytes** | **470,123** | **81.0%** |
+| 40 bytes | 67,854 | 11.7% |
+| 64 bytes | 6,543 | 1.1% |
+| everything else | 36,095 | 6.2% |
+
+48 bytes is `CYapfRoadNode`. Inside `YapfRoadVehicleChooseTrack` specifically, 448,098 of 454,126
+allocations are exactly 48 bytes, so **98.7% of what road pathfinding allocates is nodes**. The
+40-byte band is `CargoPacket`, which the M1 named pool confirms independently at the same size.
+
+This matters because of how the pathfinder entry got there. It reasoned from MSVC's `deque`
+source, where `_Block_size` is 1 for any element over 8 bytes, to "every YAPF node is an
+individual `malloc`", and supported it with sampled time sitting inside the allocator. That was
+inference. This is the measurement, and the inferred 48-byte figure derived by hand from the
+struct layout turns out to be exactly right.
+
+Attribution by zone in the same window:
+
+| Zone | calls | allocations | share |
+| --- | --- | --- | --- |
+| `YapfRoadVehicleChooseTrack` | 443 | 454,126 | 78.2% |
+| `YapfShipChooseTrack` | 276 | 56,834 | 9.8% |
+| `YapfRoadVehicleFindNearestDepot` | 98 | 18,940 | 3.3% |
+| `YapfTrainChooseTrack` | 103 | 6,395 | 1.1% |
+
+**Do not read 78.2% as the whole-run share.** This window's road searches average 510.8 us
+against the 165.6 us whole-run mean from the T5 trace, so it is roughly three times busier than
+typical and was chosen for convenience rather than representativeness. The M0 regression put road
+pathfinding at about half of the run, and a per-millisecond figure from this window puts it
+nearer a third. Somewhere between a third and a half, and pinning it down needs a longer M2
+capture or M3's hot-spot tree.
+
+The two figures that do travel are per-call ones: **1,025 allocations per road search** in this
+window, and **2,007 allocations per millisecond of road pathfinding**. Roughly one allocation per
+node explored, plus a handful of container growths per search, visible as single allocations of
+16,423, 512, 256, 128 and 64 bytes at about one per call.
+
+#### Cost
+
+Three runs inside seven minutes, which is as controlled as this machine gets:
+
+| Tree and tier | wentbourne, 300 ticks | vs baseline |
+| --- | --- | --- |
+| `build-tracy`, no memory tracking | 19,792.7 ms | |
+| `build-tracy-mem`, counters and named pools | 19,889.8 ms | +0.5% |
+| `build-tracy-mem`, global tier live | 24,853.0 ms | **+25.6%** |
+
+Single runs, so read the +0.5% as "lost in the noise" rather than as a measurement. The +25.6%
+is large enough to survive this machine's drift and is the honest price of the tier: it is what a
+lock acquire and a queue write per allocation costs at 40,000 allocations per tick.
+
+#### Trace size, and a correction to M0
+
+109.32 MB for 300 ticks, so 364 KB per tick. The M0 entry estimated 270 MB for 300 ticks by
+scaling the standard tier's bytes per zone, and that was **2.5 times too pessimistic**. Tracy
+compresses memory events better than zones.
+
+The practical budget is therefore looser than M0 claimed. A 1,000 tick wentbourne capture lands
+near 360 MB and a 2,000 tick one near 730 MB, both of which the bindings have already handled at
+larger sizes. Twenty thousand ticks would be 7 GB and is still out.
+
+#### Gates
+
+| Gate | Result |
+| --- | --- |
+| `openttd_test`, `build` with the options off | **PASS**, 2176 assertions in 98 test cases |
+| `openttd_test`, `build-tracy-mem` with the tier on | **PASS**, 2176 assertions in 98 test cases |
+| Configure guard, `OPTION_TRACY_MEM_GLOBAL` alone | **PASS**, configure refuses |
+| State fingerprint, wentbourne, 300 ticks | **PASS**, `21135C81503802F4`, identical to `build-tracy` |
+| Capture survives a full run | **PASS**, 12,971,700 allocations, no termination |
+| Interactive run | **NOT RUN.** Outstanding. |
+
+The unit suite is worth more than usual again. Catch2 allocates heavily before `main`, and the
+tier is live in that binary, so a badly ordered or unbalanced pair had every chance to show.
+
+#### A method note for anyone reading a big memory trace
+
+`get_memory_events` takes a maximum count and no offset, so only a prefix of the events is
+reachable through the bindings. On this trace 4,000,000 events came back in 1.8 seconds and
+covered the first 3.49 seconds of a 28 second capture, nearly all of it savegame load.
+
+Steady-state analysis therefore has to work inside a window: pull a prefix long enough to reach
+past the load phase, drop everything before a cutoff, and bucket what remains against zone
+occurrences. That is what produced the numbers above, and it is why they carry a window caveat
+that a whole-run figure would not.
+
+#### What M3 needs to know
+
+1. The tier holds up. Thirteen million events, no unmatched pair, a fingerprint that matches and
+   a capture that completes.
+2. M3 adds a stack walk to every one of those events. At 40,000 allocations per tick against the
+   +25.6% this tier already costs, expect the callstack tier to be far more expensive again and
+   plan captures in tens of ticks rather than hundreds.
+3. The hot-spot tree is what settles the whole-run attribution question this entry had to leave
+   open, and `get_memory_events` already returns a `callstack_idx` that
+   `get_callstack_frames` resolves. The plumbing on the analysis side is done.
