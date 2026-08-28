@@ -61,6 +61,7 @@ function(set_options)
     option(OPTION_TRACY_DETAIL "Also emit the per-object Tracy zones; requires OPTION_TRACY" OFF)
     option(OPTION_TRACY_MEM "Also track memory allocations; requires OPTION_TRACY" OFF)
     option(OPTION_TRACY_MEM_GLOBAL "Also report every process allocation to Tracy; requires OPTION_TRACY_MEM" OFF)
+    option(OPTION_TRACY_MEM_CALLSTACK "Also capture a call stack per allocation; requires OPTION_TRACY_MEM_GLOBAL" OFF)
 
     # Failing loudly rather than ignoring it: on its own this option changes nothing, so a
     # silent no-op would look like the detail tier being broken.
@@ -74,6 +75,10 @@ function(set_options)
 
     if(OPTION_TRACY_MEM_GLOBAL AND NOT OPTION_TRACY_MEM)
         message(FATAL_ERROR "OPTION_TRACY_MEM_GLOBAL does nothing without OPTION_TRACY_MEM. Enable both, or neither.")
+    endif()
+
+    if(OPTION_TRACY_MEM_CALLSTACK AND NOT OPTION_TRACY_MEM_GLOBAL)
+        message(FATAL_ERROR "OPTION_TRACY_MEM_CALLSTACK does nothing without OPTION_TRACY_MEM_GLOBAL. Enable both, or neither.")
     endif()
     option(OPTION_USE_NSIS "Use NSIS to create windows installer; enable only for stable releases" OFF)
     option(OPTION_TOOLS_ONLY "Build only tools target" OFF)
@@ -125,6 +130,9 @@ function(show_options)
         if(OPTION_TRACY_MEM)
             message(STATUS "Option Tracy global heap reporting - ${OPTION_TRACY_MEM_GLOBAL}")
         endif()
+        if(OPTION_TRACY_MEM_GLOBAL)
+            message(STATUS "Option Tracy allocation call stacks - ${OPTION_TRACY_MEM_CALLSTACK}")
+        endif()
         message(WARNING "Tracy instrumentation is compiled in; do not take timings from this build tree")
     endif()
 
@@ -138,6 +146,10 @@ function(show_options)
 
     if(OPTION_TRACY_MEM_GLOBAL)
         message(WARNING "Tracy global heap reporting emits a memory event per allocation, roughly 63000 per tick on wentbourne. Keep captures to a few hundred ticks")
+    endif()
+
+    if(OPTION_TRACY_MEM_CALLSTACK)
+        message(WARNING "Tracy allocation call stacks walk the stack on every allocation. Keep captures to tens of ticks")
     endif()
 
     if(OPTION_SURVEY_KEY)

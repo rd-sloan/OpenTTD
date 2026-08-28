@@ -282,8 +282,12 @@ if(OPTION_TRACY_MEM)
     # exactly how it was got wrong the first time.
     set_source_files_properties(src/profiling_mem.cpp PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
     if(OPTION_TRACY_MEM_GLOBAL)
+        set(TRACY_MEM_DEFS OTTD_TRACY_MEM_GLOBAL)
+        if(OPTION_TRACY_MEM_CALLSTACK)
+            list(APPEND TRACY_MEM_DEFS OTTD_TRACY_MEM_CALLSTACK)
+        endif()
         set_source_files_properties(src/profiling_mem.cpp PROPERTIES
-            COMPILE_DEFINITIONS OTTD_TRACY_MEM_GLOBAL
+            COMPILE_DEFINITIONS "${TRACY_MEM_DEFS}"
         )
     endif()
 endif()

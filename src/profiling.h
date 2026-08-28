@@ -213,6 +213,13 @@ private:
 #	define OTTD_MEM_ALLOC(ptr, size) TracyAlloc(ptr, size)
 /** Report a deallocation in Tracy's default memory pool. @see OTTD_MEM_ALLOC */
 #	define OTTD_MEM_FREE(ptr) TracyFree(ptr)
+/**
+ * As #OTTD_MEM_ALLOC, but walking \a depth stack frames so the allocation can be attributed to
+ * the code that asked for it. This is what fills Tracy's allocation hot-spot tree, and it is
+ * the single most expensive thing in this header: a stack walk on every allocation in the
+ * process. Phase M3, and captures using it are measured in tens of ticks.
+ */
+#	define OTTD_MEM_ALLOC_S(ptr, size, depth) TracyAllocS(ptr, size, depth)
 
 #else
 
@@ -221,6 +228,7 @@ private:
 #	define OTTD_MEM_FREE_N(ptr, name)
 #	define OTTD_MEM_ALLOC(ptr, size)
 #	define OTTD_MEM_FREE(ptr)
+#	define OTTD_MEM_ALLOC_S(ptr, size, depth)
 
 #endif /* WITH_TRACY && OTTD_TRACY_MEM */
 

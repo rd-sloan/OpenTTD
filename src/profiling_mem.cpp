@@ -44,7 +44,27 @@
  * them per tick, so captures are a few hundred ticks at most.
  * @see docs/tracy-memory-log.md
  */
-#ifdef OTTD_TRACY_MEM_GLOBAL
+#if defined(OTTD_TRACY_MEM_GLOBAL) && defined(OTTD_TRACY_MEM_CALLSTACK)
+/**
+ * Stack frames captured per allocation, phase M3.
+ *
+ * Sixteen reaches the pathfinder entry points, which is what attribution needs. The chain from
+ * YapfRoadVehicleChooseTrack down to the allocation runs about thirteen named frames, so this
+ * clears it without paying for the ten frames above it that are the same on every allocation in
+ * the game loop. Deeper is not better here: the walk is per allocation and there are 40,000 of
+ * them a tick.
+ */
+#	define MEM_CALLSTACK_DEPTH 16
+/*
+ * Only the allocation carries a stack. The deallocation deliberately does not: a free's stack
+ * says where memory was released, the hot-spot tree is built from where it was requested, and
+ * capturing both would double the most expensive part of this file for something nothing here
+ * asks about. Tracy accepts the mixture, since a callstack-carrying alloc and a plain free are
+ * independent event types.
+ */
+#	define REPORT_ALLOC(ptr, size) OTTD_MEM_ALLOC_S(ptr, size, MEM_CALLSTACK_DEPTH)
+#	define REPORT_FREE(ptr) OTTD_MEM_FREE(ptr)
+#elif defined(OTTD_TRACY_MEM_GLOBAL)
 #	define REPORT_ALLOC(ptr, size) OTTD_MEM_ALLOC(ptr, size)
 #	define REPORT_FREE(ptr) OTTD_MEM_FREE(ptr)
 #else
