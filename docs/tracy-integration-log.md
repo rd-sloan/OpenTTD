@@ -973,3 +973,50 @@ locks, sections, frames and context switches. That was the reason to want the se
 Also worth flagging because it cost time: Tracy's own `extra/mcp/eval_guide.md` documents these
 keys as `'name (addr)[arch] <srcloc_id>'` with a parseable source-location id. That format does
 not exist in v0.14.0, and no binding enumerates source-location ids at all.
+
+### 2026-08-28: per-type names for the AgeCargoAndPlaySound zone
+
+Follows directly from the bindings defect above. `AgeCargoAndPlaySound` is a template over
+`VehicleType`, and `src/vehicle.cpp` was the only zone in the tree that let Tracy derive its
+label from `__FUNCTION__` instead of naming itself. MSVC reports `__FUNCTION__` without
+template arguments, so all four instantiations emitted their own source location under one
+shared name, and anything aggregating by name saw one of the four.
+
+The fix is a `constexpr` name selector per instantiation, giving
+`AgeCargoAndPlaySound<Train>`, `<Road>`, `<Ship>` and `<Aircraft>`.
+
+**Naming it explicitly would not have been enough.** A fixed literal still gives four source
+locations carrying one name. The name has to vary with the template parameter, which is the
+rule to carry into the deferred `TickVehiclesOfType` typed-pass zones, since those are
+templates too.
+
+Cost is nil. Each instantiation already built its own `static constexpr SourceLocationData`;
+only the name pointer differs, and it resolves at compile time. Nothing is added to a path
+that runs 3.4 million times per 40 ticks on wentbourne.
+
+#### Verified
+
+Hilbergen, 300 ticks, detail: `TickVehicle` 844,120 and `AgeCargoAndPlaySound<Train>` 819,000,
+both identical to the pre-rename figures. Only the train instantiation appears, and the harness
+report says why: `load.consists_road`, `load.consists_ships` and `load.consists_aircraft` are
+all 0 at load. That also settles the open question from T4 and T5 about why the road, ship and
+aircraft detail zones were never observed. It was the fixture, not the instrumentation.
+
+Wentbourne, 40 ticks, detail, which does have all four types:
+
+| Zone | Count | Cross-check |
+| --- | --- | --- |
+| `AgeCargoAndPlaySound<Train>` | 3,007,280 | 15.6x `GameLoopTrains` (193,320), long consists |
+| `AgeCargoAndPlaySound<Road>` | 219,960 | exactly `GameLoopRoadVehicles`, single-part |
+| `AgeCargoAndPlaySound<Ship>` | 112,720 | exactly `GameLoopShips`, single-part |
+| `AgeCargoAndPlaySound<Aircraft>` | 61,160 | 2.04x `GameLoopAircraft` (29,960), shadow and rotor parts |
+
+The four sum to 3,401,120 against `TickVehicle` at 3,410,360. The 9,240 difference is effect
+and disaster vehicles, which tick but carry no cargo, exactly as the `static_assert` says.
+
+The bindings integrity guard now returns a gap of **zero** on both captures, where the older
+Hilbergen trace was short by 152,850,822.
+
+State fingerprint, Hilbergen, 20,000 ticks: `build-tracy` and `build-tracy-detail` both
+reproduce the recorded baseline `015ED3D109C5CCCC`. Unit suite 2176 assertions in 98 test
+cases, pass. `build-tracy-detail` was rebuilt before capturing, per the rule above.

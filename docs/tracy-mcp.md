@@ -140,11 +140,19 @@ name.** From `python/bindings/ServerModule.cpp:265`, it iterates
 the bare zone name. Two callsites with the same name means the second overwrites
 the first. No summing, no warning, no error.
 
-In this trace `AgeCargoAndPlaySound` is instantiated per vehicle type and has
+In that trace `AgeCargoAndPlaySound` is instantiated per vehicle type and has
 four source locations, all at `vehicle.cpp:1126`, with counts 152,843,120 /
 7,260 / 4,400 / 440. `get_all_zone_stats()` reports **4,400** — the road vehicle
 one, whichever landed last — and 152,850,820 zone instances vanish from the
 result. That is 47% of the whole trace.
+
+Our own instance of this is fixed: the zone is now named per instantiation
+(`AgeCargoAndPlaySound<Train>` and so on), so captures taken after 2026-08-28
+have a zero gap. The defect itself is unchanged, and any future zone placed
+inside a template will walk into it again, so the guard below stays the real
+safety net. The rule that avoids it is that a zone in a template needs a name
+that varies with the template parameter. An explicit but fixed literal is not
+enough, since every instantiation would still emit that same name.
 
 `get_root_zone_stats()` has the same bug at line 313. It accumulates correctly
 into a map keyed by source location id and then flattens to names on the way out.

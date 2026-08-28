@@ -1104,6 +1104,27 @@ static bool TickVehicle(Vehicle *v)
 }
 
 /**
+ * The Tracy zone name for one #AgeCargoAndPlaySound instantiation.
+ *
+ * An unnamed zone takes its label from __FUNCTION__, which MSVC reports without template
+ * arguments, so all four instantiations would share the name "AgeCargoAndPlaySound". Each
+ * still emits its own source location, and Tracy's zone statistics are keyed by name, so
+ * the four would be reported as one. Naming them apart is free: the name is chosen at
+ * compile time and only the pointer inside the per-instantiation source location differs.
+ *
+ * @tparam Type The vehicle type this instantiation handles.
+ * @return The zone name, a literal with static storage duration.
+ */
+template <VehicleType Type>
+static constexpr const char *AgeCargoZoneName()
+{
+	if constexpr (Type == VehicleType::Train) return "AgeCargoAndPlaySound<Train>";
+	else if constexpr (Type == VehicleType::Road) return "AgeCargoAndPlaySound<Road>";
+	else if constexpr (Type == VehicleType::Ship) return "AgeCargoAndPlaySound<Ship>";
+	else return "AgeCargoAndPlaySound<Aircraft>";
+}
+
+/**
  * The per-vehicle work that follows a successful tick: cargo ageing and running sounds.
  *
  * Factored out so that both variants run identical code here, which is what makes their
@@ -1122,8 +1143,9 @@ static void AgeCargoAndPlaySound(T *v)
 			"Effect and disaster vehicles carry no cargo and make no running sound");
 
 	/* Detail tier, and a sibling of the TickVehicle zone rather than a child, so the two
-	 * separate a part's tick cost from its cargo ageing and sound work. */
-	OTTD_ZONE_DETAIL;
+	 * separate a part's tick cost from its cargo ageing and sound work. Named per type
+	 * because @see AgeCargoZoneName explains what an unnamed zone would collapse into. */
+	OTTD_ZONE_DETAIL_N(AgeCargoZoneName<Type>());
 
 	Vehicle *front = v->First();
 
