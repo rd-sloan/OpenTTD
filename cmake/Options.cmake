@@ -59,11 +59,16 @@ function(set_options)
     option(OPTION_USE_ASSERTS "Use assertions; leave enabled for nightlies, betas, and RCs" ON)
     option(OPTION_TRACY "Build with the Tracy profiler client; never use this tree for timings" OFF)
     option(OPTION_TRACY_DETAIL "Also emit the per-object Tracy zones; requires OPTION_TRACY" OFF)
+    option(OPTION_TRACY_MEM "Also track memory allocations; requires OPTION_TRACY" OFF)
 
     # Failing loudly rather than ignoring it: on its own this option changes nothing, so a
     # silent no-op would look like the detail tier being broken.
     if(OPTION_TRACY_DETAIL AND NOT OPTION_TRACY)
         message(FATAL_ERROR "OPTION_TRACY_DETAIL does nothing without OPTION_TRACY. Enable both, or neither.")
+    endif()
+
+    if(OPTION_TRACY_MEM AND NOT OPTION_TRACY)
+        message(FATAL_ERROR "OPTION_TRACY_MEM does nothing without OPTION_TRACY. Enable both, or neither.")
     endif()
     option(OPTION_USE_NSIS "Use NSIS to create windows installer; enable only for stable releases" OFF)
     option(OPTION_TOOLS_ONLY "Build only tools target" OFF)
@@ -111,11 +116,16 @@ function(show_options)
 
     if(OPTION_TRACY)
         message(STATUS "Option Tracy detail zones - ${OPTION_TRACY_DETAIL}")
+        message(STATUS "Option Tracy memory tracking - ${OPTION_TRACY_MEM}")
         message(WARNING "Tracy instrumentation is compiled in; do not take timings from this build tree")
     endif()
 
     if(OPTION_TRACY_DETAIL)
         message(WARNING "Tracy detail zones fire once per vehicle, not once per tick. Keep captures of large savegames to a few hundred ticks")
+    endif()
+
+    if(OPTION_TRACY_MEM)
+        message(WARNING "Tracy memory tracking replaces global operator new and delete; every allocation in the process goes through it")
     endif()
 
     if(OPTION_SURVEY_KEY)
@@ -151,6 +161,10 @@ function(add_definitions_based_on_options)
 
     if(OPTION_TRACY_DETAIL)
         add_definitions(-DOTTD_TRACY_DETAIL)
+    endif()
+
+    if(OPTION_TRACY_MEM)
+        add_definitions(-DOTTD_TRACY_MEM)
     endif()
 
     if(OPTION_SURVEY_KEY)

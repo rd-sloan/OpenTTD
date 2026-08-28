@@ -1247,6 +1247,11 @@ void StateGameLoop()
 	PerformanceMeasurer framerate(PerformanceElement::GameLoop);
 	PerformanceAccumulator::Reset(PerformanceElement::GameLoopLandscape);
 
+	/* Declared after the measurer so that the allocations it plots cover the same span the
+	 * GameLoop zone does. Placed below the paused early return, because a tick that did not
+	 * run should not contribute a zero to the plot. */
+	OTTD_MEM_TICK(memory_tick);
+
 	if (_game_mode == GameMode::Editor) {
 		BasePersistentStorageArray::SwitchMode(PSM_ENTER_GAMELOOP);
 		RunTileLoop();

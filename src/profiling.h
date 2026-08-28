@@ -145,4 +145,46 @@ private:
 #	define OTTD_ZONE_DETAIL_C(name, colour)
 #endif /* WITH_TRACY && OTTD_TRACY_DETAIL */
 
+/**
+ * Memory tracking, gated on OTTD_TRACY_MEM because it replaces global operator new and
+ * delete and so touches every allocation in the process.
+ *
+ * Phase M0 counts allocations and plots them; it reports nothing to Tracy's memory
+ * subsystem. The counters stay in later phases as the cross-check against the event count
+ * Tracy receives. @see docs/tracy-memory-plan.md
+ */
+#if defined(WITH_TRACY) && defined(OTTD_TRACY_MEM)
+
+/**
+ * RAII marker for one game loop iteration, which plots the allocations made inside it.
+ *
+ * Scoped rather than a pair of calls because #StateGameLoop has an early return for the
+ * paused case, and a tick that did not run should not produce a data point.
+ *
+ * The counters behind this are process-wide, so on a threaded interactive run the delta
+ * includes whatever the draw thread managed between the two samples. It is exact only for
+ * the null driver, which has no game thread. @see docs/tracy-memory-log.md
+ */
+class ScopedProfilerMemoryTick {
+public:
+	ScopedProfilerMemoryTick();
+	~ScopedProfilerMemoryTick();
+
+	ScopedProfilerMemoryTick(const ScopedProfilerMemoryTick &) = delete;
+	ScopedProfilerMemoryTick &operator=(const ScopedProfilerMemoryTick &) = delete;
+
+private:
+	uint64_t allocs; ///< Allocation count when the scope was entered.
+	uint64_t bytes; ///< Allocated byte total when the scope was entered.
+};
+
+/** Plot the allocations made in the enclosing scope, which is one game loop iteration. */
+#	define OTTD_MEM_TICK(variable) ScopedProfilerMemoryTick variable
+
+#else
+
+#	define OTTD_MEM_TICK(variable)
+
+#endif /* WITH_TRACY && OTTD_TRACY_MEM */
+
 #endif /* PROFILING_H */

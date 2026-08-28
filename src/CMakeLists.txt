@@ -55,6 +55,12 @@ add_files(
     CONDITION Soxr_FOUND
 )
 
+# Replaces global operator new and delete, so it is compiled in only when asked for.
+add_files(
+    profiling_mem.cpp
+    CONDITION OPTION_TRACY_MEM
+)
+
 add_files(
     aircraft.h
     aircraft_cmd.cpp
